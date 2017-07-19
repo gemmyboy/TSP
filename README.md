@@ -13,6 +13,10 @@ currently existing on the SS and subscribe/join a group.
 When subscribing to a group as a _Master_-Client, all data coming from Standard-Client(s) will be funneled to the Master-Client. 
 Vice-versa, a Master-Client may either broadcast data **or** send data individually to Standard-Client(s) subscribed to the group.
 
+## Requirements
++ Pure go1.7.3 or better; might work with older versions but not tested.
++ Library: github.com/streamrail/concurrent-map
+
 ## Testing
 Use: go test-v
 
