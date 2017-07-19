@@ -33,7 +33,7 @@ import (
    	- x Connection Capacity for SS
 
    	Speciality Feature - Group Subscription:
-   	- Creates theoritical "groups" in the data which connections subscribe too to receive data from.
+   	- Creates theoretical "groups" in the data which connections subscribe too to receive data from.
    	- x Create Group - Box Data Format -: <name>,<password>,<masterpassword>,<capacity>
    	- x Delete Group - Box Data Format -: <group-id>
    	- x Join Group - Box Data Format -: <group-id>,<password>,<opt-masterpassword>
