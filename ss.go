@@ -169,8 +169,8 @@ func (ss *SyncServer) processConnections() {
 	ss.listener.Close()
 } //End processConnections()
 
-//box -: generates usable Box from received data
-func (ss *SyncServer) box(data []byte) *Box {
+//BoxData -: generates usable Box from received data
+func BoxData(data []byte) *Box {
 	if len(data) >= 16 { //Box requires a minimum of command and destination
 		b := new(Box)
 
@@ -184,8 +184,8 @@ func (ss *SyncServer) box(data []byte) *Box {
 	return nil
 } //End box()
 
-//unbox -: reduces usable Box into a byte array for sending
-func (ss *SyncServer) unbox(b *Box) []byte {
+//UnboxData -: reduces usable Box into a byte array for sending
+func UnboxData(b *Box) []byte {
 	buf := bytes.NewBuffer(nil)
 
 	tb0 := make([]byte, 4)
@@ -503,7 +503,7 @@ func (ss *SyncServer) groupSendIndividual(b *Box, id string) {
 
 //send -: Sends data and waits for confirmation
 func (ss *SyncServer) send(b *Box, conn net.Conn) {
-	ub := ss.unbox(b)
+	ub := UnboxData(b)
 
 	//Send box over connection
 	ss.muxSend.Lock()
@@ -570,7 +570,7 @@ func (ss *SyncServer) receive(conn net.Conn) *Box {
 	//log.Println("Total:", total, "- Size:", int(size), "- Buffer Size:", len(data)) //DEBUG
 
 	//Create Box to view data
-	b := ss.box(data)
+	b := BoxData(data)
 
 	time.Sleep(time.Millisecond * 1)
 	return b
