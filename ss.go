@@ -57,12 +57,13 @@ type SyncServer struct {
 	ider     uint64           //Used to create a unique id's for groups and connections
 	listener *net.TCPListener //Listener used to accept connections
 
-	isRunning   bool               //Flag for if SS is running
-	connections cmap.ConcurrentMap //Concurrent map used to handle connections
-	groups      cmap.ConcurrentMap //Concurrent map used to handle groups
-	muxSend     *sync.Mutex        //Mutex for Sending Data
-	muxIder     *sync.Mutex        //Mutex for Ider var
-	muxCurrent  *sync.Mutex        //Mutex for Current var
+	isRunning      bool               //Flag for if SS is running
+	connections    cmap.ConcurrentMap //Concurrent map used to handle connections
+	groups         cmap.ConcurrentMap //Concurrent map used to handle groups
+	groupsNameToID cmap.ConcurrentMap //Concurrent map used to convert group name to ID
+	muxSend        *sync.Mutex        //Mutex for Sending Data
+	muxIder        *sync.Mutex        //Mutex for Ider var
+	muxCurrent     *sync.Mutex        //Mutex for Current var
 } //End SyncServer struct
 
 //Group -: Struct for containing all Data specific to the Group
@@ -112,6 +113,7 @@ func NewSyncServer(address string) *SyncServer {
 	ss.isRunning = false
 	ss.connections = cmap.New()
 	ss.groups = cmap.New()
+	ss.groupsNameToID = cmap.New()
 	ss.muxSend = new(sync.Mutex)
 	ss.muxIder = new(sync.Mutex)
 	ss.muxCurrent = new(sync.Mutex)
@@ -135,6 +137,11 @@ func (ss *SyncServer) Stop() {
 func (ss *SyncServer) SetCapacity(x int) {
 	ss.capacity = uint64(x)
 } //End SetCapacity()
+
+//IsRunning -: Whether the SS is running or not
+func (ss *SyncServer) IsRunning() bool {
+	return ss.isRunning
+} //End IsRunning()
 
 //processConnections -: Processes connections and forks go-routines for each connection
 func (ss *SyncServer) processConnections() {
@@ -357,6 +364,18 @@ func (ss *SyncServer) groupCreate(b *Box) {
 	ss.muxIder.Lock()
 	ss.ider++
 	ss.muxIder.Unlock()
+
+	//Checking if room already exists
+	tID, tB := ss.groupsNameToID.Get(data[0])
+	if tB {
+		if ss.groups.Has(tID.(string)) {
+			log.Println("Group: " + data[0] + " already exists!")
+			return
+		}
+	}
+
+	//Create name to ID mapping
+	ss.groupsNameToID.Set(data[0], id)
 
 	//Create Room
 	ss.groups.Set(

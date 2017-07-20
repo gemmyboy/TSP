@@ -23,8 +23,9 @@ type Client struct {
 	conn        net.Conn          //Used to send/receive data
 	connStr     string            //Where to connect too
 	gName       map[string]uint32 //Map Name to group ID
-	muxSend     *sync.Mutex
-	receiveChan chan *Box //Queue of Boxes client needs to process
+	muxSend     *sync.Mutex       //Mutex to control Send
+	muxReceive  *sync.Mutex       //Mutex to control Receive
+	receiveChan chan *Box         //Queue of Boxes client needs to process
 } //End Client
 
 //---------------Basic Functionality-----------------------------
@@ -35,6 +36,7 @@ func NewClient(connectString string) *Client {
 	c.connStr = connectString
 	c.gName = make(map[string]uint32)
 	c.muxSend = &sync.Mutex{}
+	c.muxReceive = &sync.Mutex{}
 	return c
 } //End NewClient()
 
@@ -45,28 +47,35 @@ func (c *Client) Connect() {
 		log.Fatalln("Failed to connect to SS", err)
 	}
 	c.conn = conn
+
+	go c.process()
+	time.Sleep(time.Millisecond * 500)
+
+	c.GroupList()
 } //End Connect()
 
 //Disconnect -: Close the connection
 func (c *Client) Disconnect() {
-	_ = c.conn.Close()
+	//Tell SS we're disconnecting
+	c.SendBox(&Box{command: cDisconnect})
+
+	//Now disconnect
+	c.muxReceive.Lock()
+	err := c.conn.Close()
+	Check(err)
+	c.muxReceive.Unlock()
 } //End Disconnect()
 
-//process -: continuesly receive and process incoming data
+//process -: continuously receive and process incoming data
 func (c *Client) process() {
 	for {
 		//Connection nulls out of hardware can't keep up
 		b := &Box{}
 		if c.conn == nil {
-			return
-		}
-
-		//Wait to receive data, once done, send confirmation bit, and generate box
-		b = c.receive()
-
-		//Error Checking Box
-		if b == nil {
-			return
+			b = &Box{command: cDisconnect}
+		} else {
+			//Wait to receive data, once done, send confirmation bit, and generate box
+			b = c.receive()
 		}
 
 		switch b.command {
@@ -81,6 +90,7 @@ func (c *Client) process() {
 				//Grab list
 				str := string(b.data)
 				strA := strings.Split(str, ";")
+				strA = strA[:len(strA)-1] //Slice adjustment since Split() adds empty memory at the end.
 
 				for _, v := range strA {
 					strB := strings.Split(v, ",")
@@ -101,14 +111,15 @@ func (c *Client) process() {
 				c.Disconnect()
 				return
 			}
-		}
-	}
+		} //End switch
+		time.Sleep(time.Millisecond * 1)
+	} //End for
 } //End process()
 
-//Receive -: DeQueue data box to process
-func (c *Client) Receive() *Box {
+//ReceiveBox -: DeQueue data box to process
+func (c *Client) ReceiveBox() *Box {
 	return <-c.receiveChan
-} //End Receive()
+} //End ReceiveBox()
 
 //Send -: Send data to SS | Easy Send
 func (c *Client) Send(name string, data []byte) {
@@ -125,6 +136,7 @@ func (c *Client) SendBox(b *Box) {
 //GroupCreate -: Create a group on the SS
 func (c *Client) GroupCreate(name, password, mpassword string, capacity int) {
 	c.send(&Box{command: cCreate, data: []byte(name + "," + password + "," + mpassword + "," + string(capacity))})
+	c.GroupList()
 } //End GroupCreate()
 
 //GroupJoin -: Join an existing group on the SS
@@ -168,6 +180,9 @@ func (c *Client) receive() *Box {
 	size := uint32(0)
 	errCount := 0
 
+	//To handle disconnect error
+	c.muxReceive.Lock()
+
 	//Grab the size after the first read to determine how much more data to read
 	tbuf := make([]byte, 4)
 	num, err := c.conn.Read(tbuf)
@@ -210,6 +225,8 @@ func (c *Client) receive() *Box {
 		//log.Println("Total:", total, "- Size:", int(size), "- Buffer Size:", len(data)) //DEBUG
 	}
 	//log.Println("Total:", total, "- Size:", int(size), "- Buffer Size:", len(data)) //DEBUG
+
+	c.muxReceive.Unlock()
 
 	//Create Box to view data
 	b := BoxData(data)
