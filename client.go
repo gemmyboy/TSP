@@ -25,7 +25,8 @@ type Client struct {
 	gName       map[string]uint32 //Map Name to group ID
 	muxSend     *sync.Mutex       //Mutex to control Send
 	muxReceive  *sync.Mutex       //Mutex to control Receive
-	receiveChan chan *Box         //Queue of Boxes client needs to process
+	receiveChan chan *Box         //Queue of Boxes client has received
+	sendChan    chan *Box         //Queue of Boxes client needs to send
 } //End Client
 
 //---------------Basic Functionality-----------------------------
@@ -37,6 +38,8 @@ func NewClient(connectString string) *Client {
 	c.gName = make(map[string]uint32)
 	c.muxSend = &sync.Mutex{}
 	c.muxReceive = &sync.Mutex{}
+	c.receiveChan = make(chan *Box, 1000)
+	c.sendChan = make(chan *Box, 1000)
 	return c
 } //End NewClient()
 
@@ -48,7 +51,8 @@ func (c *Client) Connect() {
 	}
 	c.conn = conn
 
-	go c.process()
+	go c.processReceive() //Goroutine for Receiving Data
+	go c.processSend()    //Goroutine for Sending Data
 	time.Sleep(time.Millisecond * 500)
 
 	c.GroupList()
@@ -61,13 +65,18 @@ func (c *Client) Disconnect() {
 
 	//Now disconnect
 	c.muxReceive.Lock()
+	c.muxSend.Lock()
 	err := c.conn.Close()
 	Check(err)
 	c.muxReceive.Unlock()
+	c.muxSend.Unlock()
+
+	close(c.receiveChan)
+	close(c.sendChan)
 } //End Disconnect()
 
 //process -: continuously receive and process incoming data
-func (c *Client) process() {
+func (c *Client) processReceive() {
 	for {
 		//Connection nulls out of hardware can't keep up
 		b := &Box{}
@@ -114,7 +123,15 @@ func (c *Client) process() {
 		} //End switch
 		time.Sleep(time.Millisecond * 1)
 	} //End for
-} //End process()
+} //End processReceive()
+
+//processSend -: continuously process the queue of boxes to send.
+func (c *Client) processSend() {
+	for c.conn != nil {
+		b := <-c.sendChan
+		c.send(b)
+	} //End for
+} //End processSend()
 
 //ReceiveBox -: DeQueue data box to process
 func (c *Client) ReceiveBox() *Box {
@@ -128,7 +145,7 @@ func (c *Client) Send(name string, data []byte) {
 
 //SendBox -: Send data box to SS | Advanced Send
 func (c *Client) SendBox(b *Box) {
-	c.send(b)
+	c.sendChan <- b
 } //End SendBox()
 
 //---------------Group Functionality-----------------------------
