@@ -133,10 +133,21 @@ func (c *Client) processSend() {
 	} //End for
 } //End processSend()
 
+//Receive -: Receive data from SS | Easy Receive
+func (c *Client) Receive() (int, []byte) {
+	b := c.ReceiveBox()
+	return int(b.source), b.data
+}
+
 //ReceiveBox -: DeQueue data box to process
 func (c *Client) ReceiveBox() *Box {
 	return <-c.receiveChan
 } //End ReceiveBox()
+
+//ReceiveChan -: Return the channel to process
+func (c *Client) ReceiveChan() chan *Box {
+	return c.receiveChan
+} //End ReceiveChan()
 
 //Send -: Send data to SS | Easy Send
 func (c *Client) Send(name string, data []byte) {

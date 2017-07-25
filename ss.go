@@ -90,6 +90,9 @@ type Box struct {
 	data        []byte //Data Box is transporting
 } //End Box struct
 
+//Data -: Return the data from the Box
+func (b *Box) Data() []byte { return b.data }
+
 //List of Commands
 const (
 	cDisconnect uint32 = 0 //Client is disconnecting
