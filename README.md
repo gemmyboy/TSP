@@ -46,14 +46,30 @@ c.Connect()
 
 
 //Beginner
-c.Send("RoomName", data)
+c.Send("GroupName", data)
 num, data := c.Receive()
-
 
 //Advanced
 c.SendBox(b)
 b := c.ReceiveBox()
 
+
+//Group functionality
+
+//Create - All required; Passwords cannot contain commas; Create a group on the SS
+c.GroupCreate("GroupName", "NormalUserPassword", "MasterPassword", 100) //100 is room Capacity
+
+//Join - GroupName & NormalUserPassword are required; OptionalMasterPassword is only for GroupAdmin
+c.GroupJoin("GroupName", "NormalUserPassword", "OptionalMasterPassword")
+
+//Leave - Leave a group; I.E.: stop receiving data from the group
+c.GroupLeave("GroupName")
+
+//Delete - Delete a group off the SS
+c.GroupDelete("GroupName")
+
+
+c.Disconnect()
 ```
 
 ## TODO
