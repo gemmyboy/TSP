@@ -38,7 +38,7 @@ func TestConnectDisconnect(t *testing.T) {
 			t.Error("Failed to connect to SS", err)
 		}
 
-		_, er := conn.Write(ss.unbox(&Box{command: cDisconnect, destination: 0, data: nil}))
+		_, er := conn.Write(UnboxData(&Box{command: cDisconnect, destination: 0, data: nil}))
 		if er != nil {
 			t.Error("Failed to send box to SS", er)
 		}
@@ -68,7 +68,7 @@ func TestMassiveDataLoad(t *testing.T) {
 		}
 
 		buf := make([]byte, 99999999)
-		_, er := conn.Write(ss.unbox(&Box{command: cDisconnect, destination: 0, data: buf})) //1 Gigabyte
+		_, er := conn.Write(UnboxData(&Box{command: cDisconnect, destination: 0, data: buf})) //1 Gigabyte
 		if er != nil {
 			t.Error("Failed to send box to SS", er)
 		}
@@ -101,7 +101,7 @@ func xTestConnections(x int, address string, t *testing.T) {
 				t.Error("Failed to connect to SS", err)
 			}
 
-			_, er := conn.Write(ss.unbox(&Box{command: cDisconnect, destination: 0, data: make([]byte, 1024)}))
+			_, er := conn.Write(UnboxData(&Box{command: cDisconnect, destination: 0, data: make([]byte, 1024)}))
 			if er != nil {
 				t.Error("Failed to send box to SS", er)
 			}
@@ -143,7 +143,7 @@ func TestPing(t *testing.T) {
 	}
 
 	//Send Ping Box
-	_, er := conn.Write(ss.unbox(&Box{command: cPing, destination: uint32(0), data: nil}))
+	_, er := conn.Write(UnboxData(&Box{command: cPing, destination: uint32(0), data: nil}))
 	if er != nil {
 		t.Error("Failed to send box to SS", er)
 	}
@@ -271,8 +271,7 @@ func TestGroupDelete(t *testing.T) {
 	//Delete a Group
 	ss.send(&Box{
 		command:     cDelete,
-		destination: uint32(0),
-		data:        []byte("2")}, conn)
+		destination: uint32(2)}, conn)
 
 	ss.Stop()
 } //End TestGroupDelete()
@@ -302,8 +301,8 @@ func TestGroupSendIndividual(t *testing.T) {
 		//Join as Master
 		ss.send(&Box{
 			command:     cJoin,
-			destination: uint32(0),
-			data:        []byte("2,Password,MPassword")}, connM)
+			destination: uint32(2),
+			data:        []byte("Password,MPassword")}, connM)
 
 		b := ss.receive(connM)
 		if string(b.data) == "Hello There!" && b.source == uint32(3) {
@@ -332,8 +331,8 @@ func TestGroupSendIndividual(t *testing.T) {
 		//Join as Client
 		ss.send(&Box{
 			command:     cJoin,
-			destination: uint32(0),
-			data:        []byte("2,Password")}, connC)
+			destination: uint32(2),
+			data:        []byte("Password")}, connC)
 
 		//Send Random Data
 		ss.send(&Box{
@@ -397,20 +396,18 @@ func TestGroupAll(t *testing.T) {
 	//Join a Group
 	ss.send(&Box{
 		command:     cJoin,
-		destination: uint32(0),
-		data:        []byte("2,Password")}, conn)
+		destination: uint32(2),
+		data:        []byte("Password")}, conn)
 
 	//Leave a Group
 	ss.send(&Box{
 		command:     cLeave,
-		destination: uint32(0),
-		data:        []byte("2")}, conn)
+		destination: uint32(2)}, conn)
 
 	//Delete a Group
 	ss.send(&Box{
 		command:     cDelete,
-		destination: uint32(0),
-		data:        []byte("2")}, conn)
+		destination: uint32(2)}, conn)
 
 	ss.Stop()
 } //End TestGroupAll()
@@ -440,8 +437,8 @@ func TestPingPong(t *testing.T) {
 		//Join as Master
 		ss.send(&Box{
 			command:     cJoin,
-			destination: uint32(0),
-			data:        []byte("2,Password,MPassword")}, connM)
+			destination: uint32(2),
+			data:        []byte("Password,MPassword")}, connM)
 
 		b := ss.receive(connM)
 		if string(b.data) == "Hello There!" {
@@ -469,8 +466,8 @@ func TestPingPong(t *testing.T) {
 		//Join as Client
 		ss.send(&Box{
 			command:     cJoin,
-			destination: uint32(0),
-			data:        []byte("2,Password")}, connC)
+			destination: uint32(2),
+			data:        []byte("Password")}, connC)
 
 		//Send Random Data
 		ss.send(&Box{
@@ -526,9 +523,9 @@ func xTestPingPong(x int, address string, t *testing.T) {
 		//Join as Master
 		ss.send(&Box{
 			command:     cJoin,
-			destination: uint32(0),
+			destination: uint32(2),
 			source:      uint32(0),
-			data:        []byte("2,Password,MPassword")}, connM)
+			data:        []byte("Password,MPassword")}, connM)
 
 		for boolMaster < x {
 			time.Sleep(time.Millisecond * 1)
@@ -567,9 +564,9 @@ func xTestPingPong(x int, address string, t *testing.T) {
 			//Join as Client
 			ss.send(&Box{
 				command:     cJoin,
-				destination: uint32(0),
+				destination: uint32(2),
 				source:      uint32(me),
-				data:        []byte("2,Password")}, connC)
+				data:        []byte("Password")}, connC)
 
 			//Send Random Data
 			ss.send(&Box{

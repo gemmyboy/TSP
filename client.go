@@ -167,14 +167,34 @@ func (c *Client) GroupCreate(name, password, mpassword string, capacity int) {
 	c.GroupList()
 } //End GroupCreate()
 
+//GroupDelete -: Delete a group on the SS
+func (c *Client) GroupDelete(name string) {
+	if v, ok := c.gName[name]; ok {
+		c.send(&Box{command: cDelete, destination: uint32(v)})
+		c.GroupList()
+	} else {
+		c.GroupList()
+	}
+} //End GroupDelete()
+
 //GroupJoin -: Join an existing group on the SS
 func (c *Client) GroupJoin(name, password, mpassword string) {
 	if v, ok := c.gName[name]; ok {
-		c.send(&Box{command: cJoin, data: []byte(string(v) + "," + password + "," + mpassword)})
+		c.send(&Box{command: cJoin, destination: uint32(v), data: []byte(password + "," + mpassword)})
 	} else {
 		c.GroupList()
 	}
 } //End GroupJoin()
+
+//GroupLeave -: Leave an existing group on the SS
+func (c *Client) GroupLeave(name string) {
+	if v, ok := c.gName[name]; ok {
+		c.send(&Box{command: cLeave, destination: uint32(v)})
+		c.GroupList()
+	} else {
+		c.GroupList()
+	}
+} //End GroupLeave()
 
 //GroupList -: Retrieve a list of existing groups on the SS
 func (c *Client) GroupList() {

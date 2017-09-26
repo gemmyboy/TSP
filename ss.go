@@ -35,9 +35,9 @@ import (
    	Speciality Feature - Group Subscription:
    	- Creates theoretical "groups" in the data which connections subscribe too to receive data from.
    	- x Create Group - Box Data Format -: <name>,<password>,<masterpassword>,<capacity>
-   	- x Delete Group - Box Data Format -: <group-id>
-   	- x Join Group - Box Data Format -: <group-id>,<password>,<opt-masterpassword>
-   	- x Leave Group - Box Data Format -: <group-id>
+   	- x Delete Group - Box Data Format -:
+   	- x Join Group - Box Data Format -: <password>,<opt-masterpassword>
+   	- x Leave Group - Box Data Format -:
 	- x Send Group - Box Data Format -: <anything>
 	- x Send Group Individual - Box Data Format -: <anything>
 		-NOTE: destination references group being sent too; source references specific client.
@@ -396,9 +396,8 @@ func (ss *SyncServer) groupCreate(b *Box) {
 
 //groupDelete -: Delete a group on SS
 func (ss *SyncServer) groupDelete(b *Box) {
-	//Data must contain:
-	//	<group-id>
-	data := string(b.data)
+	// b.Destination contains <group-id>
+	data := string(b.destination)
 
 	//Nil check
 	if data == "" {
@@ -415,13 +414,14 @@ func (ss *SyncServer) groupDelete(b *Box) {
 //groupJoin -: Join a group on SS
 func (ss *SyncServer) groupJoin(b *Box, id string) {
 	//Data must contain:
-	//	<group-id>,<password>,<opt-masterpassword>
+	//	<password>,<opt-masterpassword>
 	//	if masterpassword exists here, then trying to join as Master client
+	groupid := strconv.Itoa(int(b.destination))
 	data := strings.Split(string(b.data), ",")
-	if len(data) < 2 {
+	if len(data) < 1 {
 		return
-	} else if len(data) == 2 { //Join as regular member
-		tg, e := ss.groups.Get(data[0])
+	} else if len(data) == 1 { //Join as regular member
+		tg, e := ss.groups.Get(groupid)
 
 		//Group doesn't exist
 		if !e {
@@ -430,8 +430,8 @@ func (ss *SyncServer) groupJoin(b *Box, id string) {
 		g := tg.(*Group)
 
 		//Password & Capacity check
-		if g.password != data[1] && g.current >= g.capacity {
-			log.Println("Bad Password or over Capacity", data[1], g.current)
+		if g.password != data[0] && g.current >= g.capacity {
+			log.Println("Bad Password or over Capacity", data[0], g.current)
 			return
 		}
 
@@ -440,8 +440,8 @@ func (ss *SyncServer) groupJoin(b *Box, id string) {
 		g.current++
 		g.membership.Set(id, struct{}{})
 		g.muxJoin.Unlock()
-	} else if len(data) == 3 { //Join as a master
-		tg, e := ss.groups.Get(data[0])
+	} else if len(data) == 2 { //Join as a master
+		tg, e := ss.groups.Get(groupid)
 
 		//Group doesn't exist
 		if !e {
@@ -451,8 +451,8 @@ func (ss *SyncServer) groupJoin(b *Box, id string) {
 		g := tg.(*Group)
 
 		//Password & Master-Password check
-		if g.password != data[1] || g.passwordMaster != data[2] {
-			log.Println("Bad Password(s)", data[1], data[2])
+		if g.password != data[0] || g.passwordMaster != data[1] {
+			log.Println("Bad Password(s)", data[0], data[1])
 			return
 		}
 
@@ -465,16 +465,15 @@ func (ss *SyncServer) groupJoin(b *Box, id string) {
 
 //groupLeave -: Leave a group on SS
 func (ss *SyncServer) groupLeave(b *Box, id string) {
-	//Data must contain:
-	//	<group-id>
-	data := string(b.data)
+	// b.Destination contains groupid
+	groupid := strconv.Itoa(int(b.destination))
 
 	//Check nil case
-	if data == "" {
+	if groupid == "" {
 		return
 	}
 
-	tg, e := ss.groups.Get(data)
+	tg, e := ss.groups.Get(groupid)
 
 	//Group doesn't exist
 	if !e {
