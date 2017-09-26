@@ -21,6 +21,8 @@ Vice-versa, a Master-Client may either broadcast data **or** send data individua
 Use: go test-v
 
 ## Code Usage
+
+# Server Code
 ```go
 //Instantiate
 ss := tsp.NewSyncServer("localhost:4444")
@@ -35,8 +37,26 @@ ss.Start()
 ss.Stop()
 
 ```
+
+# Client Code
+```go
+//Instantiate
+c := tsp.NewClient("localhost:4444")
+c.Connect()
+
+
+//Beginner
+c.Send("RoomName", data)
+num, data := c.Receive()
+
+
+//Advanced
+c.SendBox(b)
+b := c.ReceiveBox()
+
+```
+
 ## TODO
-+ Create Client-Side API for both Master-Client(s) & Standard-Client(s)
-+ Create Client-Side API documentation
++ Create Client-Side API & documentation for Group Functionality
 + More stress testing
 + More security options
