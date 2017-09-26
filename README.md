@@ -22,7 +22,7 @@ Use: go test-v
 
 ## Code Usage
 
-# Server Code
+### Server Code
 ```go
 //Instantiate
 ss := tsp.NewSyncServer("localhost:4444")
@@ -38,7 +38,7 @@ ss.Stop()
 
 ```
 
-# Client Code
+### Client Code
 ```go
 //Instantiate
 c := tsp.NewClient("localhost:4444")
