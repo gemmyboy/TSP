@@ -2,6 +2,8 @@ package tsp
 
 import (
 	"bytes"
+	"crypto/sha1"
+	"encoding/base64"
 	"encoding/binary"
 	"io"
 	"log"
@@ -88,6 +90,8 @@ type Box struct {
 	destination uint32 //Group-ID this Box is heading towards
 	source      uint32 //Connection-ID of connection this came from
 	data        []byte //Data Box is transporting
+
+	websocket bool //Flags this is a websocket connection; doesn't make it into packet for transfer though.
 } //End Box struct
 
 //Data -: Return the data from the Box
@@ -98,13 +102,14 @@ const (
 	cDisconnect uint32 = 0 //Client is disconnecting
 	cPing       uint32 = 1 //Check to see if SS is alive and receiving
 
-	cList    uint32 = 2 //List out groups on SS and send back to connection
-	cCreate  uint32 = 3 //Create a group
-	cDelete  uint32 = 4 //Delete a group
-	cJoin    uint32 = 5 //Join a group
-	cLeave   uint32 = 6 //Leave a group
-	cSend    uint32 = 7 //Send data to a group
-	cSendInd uint32 = 8 //Send data to an individual in a group
+	cList      uint32 = 2 //List out groups on SS and send back to connection
+	cCreate    uint32 = 3 //Create a group
+	cDelete    uint32 = 4 //Delete a group
+	cJoin      uint32 = 5 //Join a group
+	cLeave     uint32 = 6 //Leave a group
+	cSend      uint32 = 7 //Send data to a group
+	cSendInd   uint32 = 8 //Send data to an individual in a group
+	cWebSocket uint32 = 9 //Flag that this is a WebSocket
 )
 
 //NewSyncServer -: Creates new SyncServer
@@ -164,6 +169,7 @@ func (ss *SyncServer) processConnections() {
 			//Create an ID for connection and fork
 			id := strconv.Itoa(int(ss.ider))
 			ss.connections.Set(id, con)
+
 			go ss.process(con, id)
 
 			//Increment ider & current
@@ -221,15 +227,23 @@ func UnboxData(b *Box) []byte {
 func (ss *SyncServer) process(conn net.Conn, id string) {
 	defer conn.Close()
 
+	//Localize Websocket State
+	isWS := false
+
 	for ss.isRunning {
 
-		//Connection nulls out of hardware can't keep up
 		b := &Box{}
+		//Connection nulls out of hardware can't keep up
 		if conn == nil {
 			b = &Box{command: cDisconnect}
 		} else {
 			//Wait to receive data, once done, send confirmation bit, and generate box
 			b = ss.receive(conn)
+			if b.websocket {
+				isWS = true
+			} else {
+				b.websocket = isWS
+			}
 		}
 
 		//log.Println(string(b.data)) //DEBUG
@@ -248,7 +262,7 @@ func (ss *SyncServer) process(conn net.Conn, id string) {
 			ss.disconnect(conn, id)
 			return
 		case cPing: //Ping the SS
-			ss.send(&Box{command: cPing, destination: uint32(0), data: []byte("1")}, conn)
+			ss.send(&Box{command: cPing, destination: uint32(0), data: []byte("1"), websocket: isWS}, conn)
 			break
 		case cList: //List out Groups
 			ss.groupList(conn)
@@ -526,6 +540,22 @@ func (ss *SyncServer) groupSendIndividual(b *Box, id string) {
 func (ss *SyncServer) send(b *Box, conn net.Conn) {
 	ub := UnboxData(b)
 
+	//WebSocket special case; Header required;
+	if b.websocket {
+		l := len(ub)
+		header := make([]byte, 0, 2)
+		header = append(header, 129)
+		if l <= 125 {
+			header = append(header, byte(uint8(l)))
+		} else if l <= 8388607 {
+
+			header = append(header, 126, byte(uint8(l>>8)), byte(uint8(l&0xff)))
+		}
+		ub = append(header, ub...)
+	}
+
+	log.Println("Sending:", ub)
+
 	//Send box over connection
 	ss.muxSend.Lock()
 	num, err := conn.Write(ub)
@@ -555,6 +585,25 @@ func (ss *SyncServer) receive(conn net.Conn) *Box {
 	} else if err != nil {
 		log.Println("Failed to receive:", err)
 		return nil
+	} else if string(tbuf) == "GET " { //WebSocket case
+		wsbuf := make([]byte, 512)
+		wsnum, _ := conn.Read(wsbuf)
+		wsbuf = wsbuf[:wsnum]
+
+		//Some of Alex's code <3
+		uRes := strings.Split(string(wsbuf), "Sec-WebSocket-Key: ")
+		uRes2 := strings.Split(uRes[1], "=")
+		u := uRes2[0] + "==258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
+		data := []byte(u)
+		bb := sha1.Sum(data)
+		v := base64.StdEncoding.EncodeToString(bb[:])
+		conn.Write([]byte("HTTP/1.1 101 Switching Protocols \r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept:" + v + "\r\n\r\n"))
+		//End some of Alex's code </3
+		time.Sleep(time.Second * 1)
+
+		//Ping
+		return &Box{command: cPing, websocket: true}
+
 	} else if num != 4 {
 		log.Println("Didn't receive size:", num)
 		return nil
@@ -612,3 +661,24 @@ func CheckKill(err error) {
 		log.Fatalln(err)
 	} //end if
 } //End CheckKill()
+
+//CheckWebSocket -: Checks to see if the current connection is a WebSocket or not
+func CheckWebSocket(conn net.Conn, ss *SyncServer) bool {
+	buf := make([]byte, 2048)
+	conn.SetDeadline(time.Now().Add(time.Millisecond * 1000))
+	num, _ := conn.Read(buf)
+
+	//Initial WS Check
+	if num == 0 {
+		log.Println("Not a Websocket")
+		return false
+	}
+	buf = buf[:num] //Adjust
+
+	if string(buf[:14]) != "GET / HTTP/1.1" {
+		log.Println("Not a Websocket")
+		return false
+	}
+
+	return true
+} //End CheckWebSocket()
