@@ -3,8 +3,8 @@ package tsp
 import (
 	"bytes"
 	"crypto/sha1"
-	"encoding/base64"
 	"encoding/binary"
+	"encoding/base64"
 	"io"
 	"log"
 	"net"
@@ -90,8 +90,6 @@ type Box struct {
 	destination uint32 //Group-ID this Box is heading towards
 	source      uint32 //Connection-ID of connection this came from
 	data        []byte //Data Box is transporting
-
-	websocket bool //Flags this is a websocket connection; doesn't make it into packet for transfer though.
 } //End Box struct
 
 //Data -: Return the data from the Box
@@ -109,7 +107,6 @@ const (
 	cLeave     uint32 = 6 //Leave a group
 	cSend      uint32 = 7 //Send data to a group
 	cSendInd   uint32 = 8 //Send data to an individual in a group
-	cWebSocket uint32 = 9 //Flag that this is a WebSocket
 )
 
 //NewSyncServer -: Creates new SyncServer
@@ -170,7 +167,7 @@ func (ss *SyncServer) processConnections() {
 			id := strconv.Itoa(int(ss.ider))
 			ss.connections.Set(id, con)
 
-			go ss.process(con, id)
+			go ss.initialize(con, id)
 
 			//Increment ider & current
 			ss.muxIder.Lock()
@@ -223,12 +220,31 @@ func UnboxData(b *Box) []byte {
 	return buf.Bytes()
 } //End unbox()
 
-//process -: performs general routing logic for given connection
-func (ss *SyncServer) process(conn net.Conn, id string) {
-	defer conn.Close()
+//intialize -: intializes the connection, sanitizes odd connections, adjusts connection type (websocket)
+func (ss *SyncServer) initialize(conn net.Conn, id string) {
+	buffer := make([]byte, 8192)
+	num, err := conn.Read(buffer)
+	Check(err)
 
-	//Localize Websocket State
-	isWS := false
+	if string(buffer[:num][:14]) == "GET / HTTP/1.1" {
+		defer ss.routeWebSocket(conn, id)		//WebSocket - (Browser)
+
+		//Request Connection Upgrade with the Browser
+		uRes := strings.Split(string(buffer[:num]), "Sec-WebSocket-Key: ")
+		uRes2 := strings.Split(uRes[1], "=")
+		u := uRes2[0] + "==258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
+		data := []byte(u)
+		b := sha1.Sum(data)
+		v := base64.StdEncoding.EncodeToString(b[:])
+		conn.Write([]byte("HTTP/1.1 101 Switching Protocols \r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept:" + v + "\r\n\r\n"))
+	} else {
+		defer ss.routeTCP(conn, id)				//TCP - (Normal)
+	}
+}//End initialize()
+
+//routeTCP -: performs general routing logic for given connection
+func (ss *SyncServer) routeTCP(conn net.Conn, id string) {
+	defer conn.Close()
 
 	for ss.isRunning {
 
@@ -239,11 +255,6 @@ func (ss *SyncServer) process(conn net.Conn, id string) {
 		} else {
 			//Wait to receive data, once done, send confirmation bit, and generate box
 			b = ss.receive(conn)
-			if b.websocket {
-				isWS = true
-			} else {
-				b.websocket = isWS
-			}
 		}
 
 		//log.Println(string(b.data)) //DEBUG
@@ -262,7 +273,7 @@ func (ss *SyncServer) process(conn net.Conn, id string) {
 			ss.disconnect(conn, id)
 			return
 		case cPing: //Ping the SS
-			ss.send(&Box{command: cPing, destination: uint32(0), data: []byte("1"), websocket: isWS}, conn)
+			ss.send(&Box{command: cPing, destination: uint32(0), data: []byte("1")}, conn)
 			break
 		case cList: //List out Groups
 			ss.groupList(conn)
@@ -288,7 +299,15 @@ func (ss *SyncServer) process(conn net.Conn, id string) {
 		}
 		time.Sleep(time.Millisecond * 1)
 	} //End for
-} //End process()
+
+} //End routeTCP()
+
+//routeWebSocket -: performs general routing logic for websocket connection
+func (ss *SyncServer) routeWebSocket(conn net.Conn, id string) {
+
+	log.Println("ALAS MATEY")
+
+}//End routeWebSocket()
 
 //---------------------------------------------------
 //-- Group Functions
@@ -540,21 +559,7 @@ func (ss *SyncServer) groupSendIndividual(b *Box, id string) {
 func (ss *SyncServer) send(b *Box, conn net.Conn) {
 	ub := UnboxData(b)
 
-	//WebSocket special case; Header required;
-	if b.websocket {
-		l := len(ub)
-		header := make([]byte, 0, 2)
-		header = append(header, 129)
-		if l <= 125 {
-			header = append(header, byte(uint8(l)))
-		} else if l <= 8388607 {
-
-			header = append(header, 126, byte(uint8(l>>8)), byte(uint8(l&0xff)))
-		}
-		ub = append(header, ub...)
-	}
-
-	log.Println("Sending:", ub)
+	//log.Println("Sending:", ub)
 
 	//Send box over connection
 	ss.muxSend.Lock()
@@ -585,25 +590,6 @@ func (ss *SyncServer) receive(conn net.Conn) *Box {
 	} else if err != nil {
 		log.Println("Failed to receive:", err)
 		return nil
-	} else if string(tbuf) == "GET " { //WebSocket case
-		wsbuf := make([]byte, 512)
-		wsnum, _ := conn.Read(wsbuf)
-		wsbuf = wsbuf[:wsnum]
-
-		//Some of Alex's code <3
-		uRes := strings.Split(string(wsbuf), "Sec-WebSocket-Key: ")
-		uRes2 := strings.Split(uRes[1], "=")
-		u := uRes2[0] + "==258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
-		data := []byte(u)
-		bb := sha1.Sum(data)
-		v := base64.StdEncoding.EncodeToString(bb[:])
-		conn.Write([]byte("HTTP/1.1 101 Switching Protocols \r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept:" + v + "\r\n\r\n"))
-		//End some of Alex's code </3
-		time.Sleep(time.Second * 1)
-
-		//Ping
-		return &Box{command: cPing, websocket: true}
-
 	} else if num != 4 {
 		log.Println("Didn't receive size:", num)
 		return nil
@@ -635,13 +621,13 @@ func (ss *SyncServer) receive(conn net.Conn) *Box {
 		//Accumulate current data size and buffered data
 		total += num
 
-		//log.Println("Total:", total, "- Size:", int(size), "- Buffer Size:", len(data)) //DEBUG
+		log.Println("Total:", total, "- Size:", int(size), "- Buffer Size:", len(data)) //DEBUG
 	}
-	//log.Println("Total:", total, "- Size:", int(size), "- Buffer Size:", len(data)) //DEBUG
+	log.Println("END-Total:", total, "- Size:", int(size), "- Buffer Size:", len(data)) //DEBUG
+	
 
 	//Create Box to view data
 	b := BoxData(data)
-
 	time.Sleep(time.Millisecond * 1)
 	return b
 } //End receive()
