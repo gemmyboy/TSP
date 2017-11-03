@@ -6,34 +6,67 @@
 */
 var SS = {
     socket: null,
+    groups: [],
+    receiveboxqueue: [],
+    //Connect -: create a connection to the SS at ipaddress
     Connect: function(ipaddress) {
         SS.socket = (new WebSocket("ws://" + ipaddress));
+        //Socket on Open
         SS.socket.onopen = function(event) {
+
+
+            //DEBUG
             Log("Open")
-            Log("Sending Ping")
-            
-            b = new Box();
-            b.command = 1;
-            b.data = "You can do the thing!";
-            SS.socket.send(SS.UnBoxData(b));
+            Log("Sent Ping")
+            SS.Ping();
+            //DEBUG
         };
-        
+        //Socket on Receive Message
         SS.socket.onmessage = function(event) {
             b = SS.BoxData(event.data);
 
-            //DEBUG
-            console.log(b);
-            Log("Message: " + String(b.size) + " " + String(b.command) + " " + String(b.data));
+            switch(b.command) {
+                case SS.Constants.cList: {
+                    tlist = b.data.split(";");
+                    for (i = 0; i < tlist.length; i++) {
+                        trow = rlist[i].split(",");
+                        SS.groups[trow[1]] = trow[0];
+                    }
+                    break;
+                }
+                case SS.Constants.cSend: {
+                    receiveboxqueue.push(b);
+                    break;
+                }
+                case SS.Constants.cSendInd: {
+                    receiveboxqueue.push(b);
+                    break;
+                }
+                case SS.Constants.cDisconnect: {
+                    SS.socket.close();
+                    break;
+                }
+                case SS.Constants.cPing: {
+                    if(b.data == "0") {
+                        SS.Ping(1);
+                        console.log("Ping Request from SS");
+                    }
+                    break;
+                }
+            }
 
-            b.command = 0;
-            b.data = "Disconnect";
-            SS.socket.send(SS.UnBoxData(b));
-            //DEBUG
         };
-        
+        //Socket Close
         SS.socket.onclose = function(event) {
             Log("Close")
         };
+    },
+    //Disconnect -: kill the connection with the SS
+    Disconnect: function() {
+        b = new Box();
+        b.command = SS.Constants.cDisconnect;
+        SS.Send(b)
+        SS.socket.close();
     },
     //BoxData -: Wrap up data into a box to make it usable
     BoxData: function(data){
@@ -46,10 +79,10 @@ var SS = {
         tSource = new Uint8Array([d[15], d[14], d[13], d[12]]);
 
         b = new Box();
-        b.size = (new DataView(tSize.buffer)).getUint32();
-        b.command = (new DataView(tCommand.buffer)).getUint32();
-        b.destination = (new DataView(tDestination.buffer)).getUint32();
-        b.source = (new DataView(tSource.buffer)).getUint32();
+        b.size = UInt8toUInt32(tSize);
+        b.command = UInt8toUInt32(tCommand);
+        b.destination = UInt8toUInt32(tDestination);
+        b.source = UInt8toUInt32(tSource);
         b.data = data.slice(16);
 
         return b;
@@ -57,7 +90,6 @@ var SS = {
     //UnBoxData -: Break is all down into a byte array and send it off
     UnBoxData: function(box){
         var dec = new TextEncoder("utf-8");
-        console.log(box);
 
         tSize = UInt32toUInt8(16 + box.data.length);
         tCommand = UInt32toUInt8(box.command);
@@ -85,9 +117,88 @@ var SS = {
         for(i = 0; i < tData.length; i++){
             data[16 + i] = tData[i];
         }
-
-        console.log(data);
         return data;
+    },
+    //Constants -: Return uint32 code of Command
+    Constants: {
+        cDisconnect: 0,
+        cPing: 1,
+        cList: 2,
+        cCreate: 3,
+        cDelete: 4,
+        cJoin: 5,
+        cLeave: 6,
+        cSend: 7,
+        cSendInd: 8
+    },
+    //Send - : shoot a Box over to the SS
+    Send: function(boxdata) {
+        SS.socket.send(SS.UnBoxData(boxdata));
+    },
+    //Ping -: ping the SS to make sure it's there
+    Ping: function(v) {
+        if (v == undefined) { v = 0; }
+        b = new Box();
+        b.command = SS.Constants.cPing;
+        b.data = v;
+        SS.Send(b);
+    },
+    /*
+        Group Commands
+        | Create
+        | Delete
+        | Join
+        | Leave
+        | List
+    */
+    //GroupCreate -: create a group on the SS
+    GroupCreate: function(name, pw, mpw, capacity) {
+        b = new Box();
+        b.command = SS.Constants.cCreate;
+        b.data = name + "," + pw + "," + mpw + "," + capacity;
+        SS.Send(b)
+        SS.GroupList();
+    },
+    //GroupDelete -: delete a group on the SS
+    GroupDelete: function(name) {
+        if (SS.groups[name] != undefined) {
+            b = new Box();
+            b.command = SS.Constants.cDelete;
+            b.destination = SS.groups[name];
+            SS.Send(b);
+            SS.GroupList();
+        } else {
+            SS.GroupList();
+        }
+    },
+    //GroupJoin -: subscribe to a group to receive data from them
+    GroupJoin: function(name, pw, optmpw) {
+        if (SS.groups[name] != undefined) {
+            b = new Box();
+            b.command = SS.Constants.cJoin;
+            b.destination = SS.groups[name];
+            b.data = pw + "," + mpw;
+            SS.Send(b);
+        } else {
+            SS.GroupList();
+        }
+    },
+    //GroupLeave -: unsubscribe from a group to stopm receiving data from them
+    GroupLeave: function(name) {
+        if (SS.groups[name] != undefined) {
+            b = new Box();
+            b.command = SS.Constants.cLeave;
+            b.destination = SS.groups[name];
+            SS.Send(b);
+        } else {
+            SS.GroupList();
+        }
+    },
+    //GroupList -: gather the current state of the SS
+    GroupList: function() {
+        b = new Box();
+        b.command = SS.Constants.cList;
+        SS.Send(b);
     }
 };
 
@@ -100,7 +211,7 @@ function Box() {
     this.size = 0;
 };
 
-//UInt8 casting function
+//Function to cast UInt32 to a UInt8[]
 function UInt32toUInt8(value) {
     return [
         value >> 24,
@@ -109,3 +220,10 @@ function UInt32toUInt8(value) {
         (value << 24) >> 24
     ];
 };
+
+//Function to cast UInt8[] to UInt32
+function UInt8toUInt32(value) {
+    return (new DataView(value.buffer)).getUint32();
+};
+
+

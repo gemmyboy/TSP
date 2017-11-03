@@ -276,7 +276,9 @@ func (ss *SyncServer) route(conn net.Conn, id string, cType int) {
 			ss.disconnect(conn, id)
 			return
 		case cPing: //Ping the SS
-			ss.send(&Box{command: cPing, destination: uint32(0), data: []byte("1")}, conn, cType)
+			if string(b.data) == "0" {
+				ss.send(&Box{command: cPing, destination: uint32(0), data: []byte("1")}, conn, cType)
+			}
 			break
 		case cList: //List out Groups
 			ss.groupList(conn, cType)
@@ -707,6 +709,15 @@ func (ss *SyncServer) wsreceive(conn net.Conn) *Box {
 	num, err := conn.Read(buffer)
 	if err == io.EOF {
 		return nil
+	} else if err, ok := err.(net.Error); ok && err.Timeout() {
+		/*
+
+			TIMEOUT Issue needs to be FIXED! -Gem
+
+
+		*/
+		log.Println("TIMEOUT", err)
+		ss.wssend(&Box{command: cPing, data: []byte{0}}, conn)
 	} else if err != nil {
 		log.Println("Failed to receive:", err)
 		return nil
