@@ -5,6 +5,7 @@ import (
 	"crypto/sha1"
 	"encoding/binary"
 	"encoding/base64"
+	//"unicode/utf8"
 	"io"
 	"log"
 	"net"
@@ -45,7 +46,9 @@ import (
 		-NOTE: destination references group being sent too; source references specific client.
 		- this works because only a master client can/will use this.
 	- x List Groups in SS when queried
-   	- x Set Group Capacity
+	    - x Set Group Capacity
+	- x Support Websocket connections in such a way that TCP vs Websocket connections can't be told apart
+		- at a higher level of management.
 
    	Comes with a complete Test Suite to fully test out functionality! <3
 	Use at command line: go test -v
@@ -223,11 +226,11 @@ func UnboxData(b *Box) []byte {
 //intialize -: intializes the connection, sanitizes odd connections, adjusts connection type (websocket)
 func (ss *SyncServer) initialize(conn net.Conn, id string) {
 	buffer := make([]byte, 8192)
+	conn.SetDeadline(time.Now().Add(time.Millisecond * 500))
 	num, err := conn.Read(buffer)
-	Check(err)
 
-	if string(buffer[:num][:14]) == "GET / HTTP/1.1" {
-		defer ss.routeWebSocket(conn, id)		//WebSocket - (Browser)
+	if CheckBool(err) && string(buffer[:num][:14]) == "GET / HTTP/1.1" {
+		defer ss.route(conn, id, 1)		//WebSocket - (Browser)
 
 		//Request Connection Upgrade with the Browser
 		uRes := strings.Split(string(buffer[:num]), "Sec-WebSocket-Key: ")
@@ -238,12 +241,12 @@ func (ss *SyncServer) initialize(conn net.Conn, id string) {
 		v := base64.StdEncoding.EncodeToString(b[:])
 		conn.Write([]byte("HTTP/1.1 101 Switching Protocols \r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept:" + v + "\r\n\r\n"))
 	} else {
-		defer ss.routeTCP(conn, id)				//TCP - (Normal)
+		defer ss.route(conn, id, 0)				//TCP - (Normal)
 	}
 }//End initialize()
 
-//routeTCP -: performs general routing logic for given connection
-func (ss *SyncServer) routeTCP(conn net.Conn, id string) {
+//route -: performs general routing logic for given connection
+func (ss *SyncServer) route(conn net.Conn, id string, cType int) {
 	defer conn.Close()
 
 	for ss.isRunning {
@@ -254,7 +257,7 @@ func (ss *SyncServer) routeTCP(conn net.Conn, id string) {
 			b = &Box{command: cDisconnect}
 		} else {
 			//Wait to receive data, once done, send confirmation bit, and generate box
-			b = ss.receive(conn)
+			b = ss.receive(conn, cType)
 		}
 
 		//log.Println(string(b.data)) //DEBUG
@@ -267,16 +270,16 @@ func (ss *SyncServer) routeTCP(conn net.Conn, id string) {
 		//Switch Over Command Options
 		switch b.command {
 		case cSend: //Send Data to a Group
-			ss.groupSend(b, id)
+			ss.groupSend(b, id, cType)
 			break
 		case cDisconnect: //Proper Disconnect
 			ss.disconnect(conn, id)
 			return
 		case cPing: //Ping the SS
-			ss.send(&Box{command: cPing, destination: uint32(0), data: []byte("1")}, conn)
+			ss.send(&Box{command: cPing, destination: uint32(0), data: []byte("1")}, conn, cType)
 			break
 		case cList: //List out Groups
-			ss.groupList(conn)
+			ss.groupList(conn, cType)
 			break
 		case cCreate: //Create Group
 			ss.groupCreate(b)
@@ -291,7 +294,7 @@ func (ss *SyncServer) routeTCP(conn net.Conn, id string) {
 			ss.groupLeave(b, id)
 			break
 		case cSendInd: //Send Data to individual in a Group
-			ss.groupSendIndividual(b, id)
+			ss.groupSendIndividual(b, id, cType)
 			break
 		default: //Improper Disconnect
 			ss.disconnect(conn, id)
@@ -300,15 +303,7 @@ func (ss *SyncServer) routeTCP(conn net.Conn, id string) {
 		time.Sleep(time.Millisecond * 1)
 	} //End for
 
-} //End routeTCP()
-
-//routeWebSocket -: performs general routing logic for websocket connection
-func (ss *SyncServer) routeWebSocket(conn net.Conn, id string) {
-
-	log.Println("ALAS MATEY")
-
-}//End routeWebSocket()
-
+} //End route()
 //---------------------------------------------------
 //-- Group Functions
 
@@ -338,7 +333,7 @@ func (ss *SyncServer) disconnect(conn net.Conn, id string) {
 
 //groupSend -: if current connection is master, sends to whole group,
 //	otherwise only sends to master.
-func (ss *SyncServer) groupSend(b *Box, id string) {
+func (ss *SyncServer) groupSend(b *Box, id string, cType int) {
 
 	num := strconv.Itoa(int(b.destination))
 	tSource, _ := strconv.Atoi(id)
@@ -356,17 +351,17 @@ func (ss *SyncServer) groupSend(b *Box, id string) {
 		for _, k := range group.membership.Keys() {
 			tConn, _ := ss.connections.Get(k)
 			conn := tConn.(net.Conn)
-			ss.send(b, conn)
+			ss.send(b, conn, cType)
 		} //End for
 	} else if group.masterid != "" { //Send to master
 		tConn, _ := ss.connections.Get(group.masterid)
 		conn := tConn.(net.Conn)
-		ss.send(b, conn)
+		ss.send(b, conn, cType)
 	}
 } //End groupSend()
 
 //groupList -: Send a list of existing
-func (ss *SyncServer) groupList(conn net.Conn) {
+func (ss *SyncServer) groupList(conn net.Conn, cType int) {
 	data := bytes.NewBufferString("")
 
 	//Generate the List of Groups currently on SS
@@ -375,7 +370,7 @@ func (ss *SyncServer) groupList(conn net.Conn) {
 		data.WriteString(id + "," + v.(*Group).name + ";")
 	} //End for
 
-	ss.send(&Box{command: cList, destination: uint32(0), data: data.Bytes()}, conn)
+	ss.send(&Box{command: cList, destination: uint32(0), data: data.Bytes()}, conn, cType)
 } //End groupList()
 
 //groupCreate -: Create a group on SS
@@ -529,7 +524,7 @@ func (ss *SyncServer) groupLeave(b *Box, id string) {
 //groupSendIndividual -: Send data to an individual in group
 //	--Destination is still group-id
 //	--Specific to this protocol, source will be specific conn id.
-func (ss *SyncServer) groupSendIndividual(b *Box, id string) {
+func (ss *SyncServer) groupSendIndividual(b *Box, id string, cType int) {
 	//Pull Group Data
 	groupID := strconv.Itoa(int(b.destination))
 	tg, ok1 := ss.groups.Get(groupID)
@@ -549,14 +544,50 @@ func (ss *SyncServer) groupSendIndividual(b *Box, id string) {
 	conn := tConn.(net.Conn)
 
 	//Group found, membership confirmed, connection found, now send.
-	ss.send(b, conn)
+	ss.send(b, conn, cType)
 } //End groupSendIndividual()
 
 //---------------------------------------------------
 //-- Helper Functions
 
-//send -: Sends data and waits for confirmation
-func (ss *SyncServer) send(b *Box, conn net.Conn) {
+//send -: choose the correct connection type
+//		0 - TCP Connection
+//		1 - WebSocket Connection
+func (ss *SyncServer) send(b *Box, conn net.Conn, cType ...int) {
+	tType := OptionalParamInt(cType)
+
+	switch tType {
+	case 0:
+		ss.tcpsend(b, conn)
+		break
+	case 1:
+		ss.wssend(b, conn)
+		break
+	default:
+		log.Println("Box dropped, connection type not found.")
+	}
+
+}//End send()
+
+//receive -: choose the correct connection type
+//		0 - TCP Connection
+//		1 - WebSocket Connection
+func (ss *SyncServer) receive(conn net.Conn, cType ...int) *Box {
+	tType := OptionalParamInt(cType)
+	
+		switch tType {
+		case 0:
+			return ss.tcpreceive(conn)
+		case 1:
+			return ss.wsreceive(conn)
+		default:
+			log.Println("Box dropped, connection type not found.")
+			return nil
+		}	
+}//End receive()
+
+//tcpsend -: (TCP only) Sends data and waits for confirmation
+func (ss *SyncServer) tcpsend(b *Box, conn net.Conn) {
 	ub := UnboxData(b)
 
 	//log.Println("Sending:", ub)
@@ -573,10 +604,10 @@ func (ss *SyncServer) send(b *Box, conn net.Conn) {
 	//log.Println("Wrote:", num, "- Size:", len(ub)) //DEBUG
 	time.Sleep(time.Millisecond * 1)
 	return
-} //End send()
+} //End tcpsend()
 
-//receive -: Receives data, sends confirmation byte, and then returns box
-func (ss *SyncServer) receive(conn net.Conn) *Box {
+//tcpreceive -: (TCP only) Receives data, sends confirmation byte, and then returns box
+func (ss *SyncServer) tcpreceive(conn net.Conn) *Box {
 	var data []byte
 	total := 4
 	size := uint32(0)
@@ -630,7 +661,96 @@ func (ss *SyncServer) receive(conn net.Conn) *Box {
 	b := BoxData(data)
 	time.Sleep(time.Millisecond * 1)
 	return b
-} //End receive()
+} //End tcpreceive()
+
+//wssend -: (WebSocket only) send data over the connection
+func (ss *SyncServer) wssend(b *Box, conn net.Conn) {
+	ub := UnboxData(b)
+
+	//log.Println("Sending:", ub)
+
+	//WebSocket required Header Code
+	header := make([]byte, 0, 2)
+	header = append(header, 129)
+	l := len(ub)
+	if l <= 125 {
+		header = append(header, byte(uint8(l)))
+	} else if l <= 8388607 {
+
+		header = append(header, 126, byte(uint8(l>>8)), byte(uint8(l&0xff)))
+	}
+
+	ub = append(header, ub...)
+	//End WebSocket required Header Code
+
+	//Send box over connection
+	ss.muxSend.Lock()
+	num, err := conn.Write(ub)
+	ss.muxSend.Unlock()
+	if err != nil {
+		log.Println("Box failed to send of size:", num, len(ub))
+		return
+	}
+
+	//log.Println("Wrote:", num, "- Size:", len(ub)) //DEBUG
+	time.Sleep(time.Millisecond * 1)
+	return
+
+}//End wssend()
+
+//wsreceive -: (WebSocket only) receive data over the connection
+// -NOTE: Needs to be extended to handle multiple FRAMES!! >:O
+func (ss *SyncServer) wsreceive(conn net.Conn) *Box {
+	var bData bytes.Buffer
+
+	buffer := make([]byte, 8192)
+	num, err := conn.Read(buffer)
+	if err == io.EOF {
+		return nil
+	} else if err != nil {
+		log.Println("Failed to receive:", err)
+		return nil
+	} else if num < 20 {
+		log.Println("(WS)Header error:", num, buffer[:num], string(buffer[:num]))
+		return nil
+	}
+	buffer = buffer[:num+1]
+	
+	//log.Println(buffer[:num], err, num)//DEBUG
+	
+	for buffer[0] == 130 {
+
+		startInd := 6
+
+		length := startInd + (int(buffer[1]) - 128)
+
+		buf2 := buffer[:length]
+
+		mask := make([]byte, 4)
+		mask[0] = buf2[startInd-4]
+		mask[1] = buf2[startInd-3]
+		mask[2] = buf2[startInd-2]
+		mask[3] = buf2[startInd-1]
+
+		b := buf2[startInd:]
+
+		for i := range b {
+			b[i] = b[i] ^ mask[i%4]
+		}
+		bData.Write(b)
+		buffer = buffer[length:]
+	}
+	if buffer[0] == 136 {
+		return nil
+	}
+	data := bData.Bytes()
+
+	//Create Box to view data
+	b := BoxData(data)
+	//log.Println(b.command, string(b.data)) //DEBUG
+
+	return b
+}//End wsreceive()
 
 //Check -: just checks for error, outputs error but does not kill
 func Check(err error) bool {
@@ -641,6 +761,14 @@ func Check(err error) bool {
 	return true
 } //End Check()
 
+//CheckBool -: checks for error without logging
+func CheckBool(err error) bool {
+	if err != nil {
+		return false
+	}
+	return true
+}//End CheckBool()
+
 //CheckKill -: Checks Error, if there is one, it logs it and kills program
 func CheckKill(err error) {
 	if err != nil {
@@ -648,23 +776,11 @@ func CheckKill(err error) {
 	} //end if
 } //End CheckKill()
 
-//CheckWebSocket -: Checks to see if the current connection is a WebSocket or not
-func CheckWebSocket(conn net.Conn, ss *SyncServer) bool {
-	buf := make([]byte, 2048)
-	conn.SetDeadline(time.Now().Add(time.Millisecond * 1000))
-	num, _ := conn.Read(buf)
-
-	//Initial WS Check
-	if num == 0 {
-		log.Println("Not a Websocket")
-		return false
+//OptionalParamInt -: Could be an empty array
+func OptionalParamInt(oType []int) int {
+	if len(oType) == 0 {
+		return 0
+	} else {
+		return oType[0]
 	}
-	buf = buf[:num] //Adjust
-
-	if string(buf[:14]) != "GET / HTTP/1.1" {
-		log.Println("Not a Websocket")
-		return false
-	}
-
-	return true
-} //End CheckWebSocket()
+}//End OptionalParamInt

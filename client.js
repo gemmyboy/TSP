@@ -10,12 +10,25 @@ var SS = {
         SS.socket = (new WebSocket("ws://" + ipaddress));
         SS.socket.onopen = function(event) {
             Log("Open")
+            Log("Sending Ping")
+            
+            b = new Box();
+            b.command = 1;
+            b.data = "You can do the thing!";
+            SS.socket.send(SS.UnBoxData(b));
         };
         
         SS.socket.onmessage = function(event) {
             b = SS.BoxData(event.data);
+
+            //DEBUG
             console.log(b);
             Log("Message: " + String(b.size) + " " + String(b.command) + " " + String(b.data));
+
+            b.command = 0;
+            b.data = "Disconnect";
+            SS.socket.send(SS.UnBoxData(b));
+            //DEBUG
         };
         
         SS.socket.onclose = function(event) {
@@ -43,27 +56,56 @@ var SS = {
     },
     //UnBoxData -: Break is all down into a byte array and send it off
     UnBoxData: function(box){
-        var dec = new TextDecoder("utf-8");
+        var dec = new TextEncoder("utf-8");
+        console.log(box);
 
-        tSize = new Uint8Array(16 + box.data.length);
-        tCommand = new Uint8Array(box.command);
-        tDestination = new Uint8Array(box.destination);
-        tSource = new Uint8Array(box.source);
+        tSize = UInt32toUInt8(16 + box.data.length);
+        tCommand = UInt32toUInt8(box.command);
+        tDestination = UInt32toUInt8(box.destination);
+        tSource = UInt32toUInt8(box.source);
+        tData = dec.encode(box.data)
 
-        data = new Uint8Array([
-            tSize[3], tSize[2], tSize[1], tSize[0],
-            tCommand[3], tCommand[2], tCommand[1], tCommand[0],
-            tDestination[3], tDestination[2], tDestination[1], tDestination[0],
-            tSource[3], tSource[2], tSource[1], tSource[0]]);
+        data = new Uint8Array(16 + tData.length);
+        data[0] = tSize[3];
+        data[1] = tSize[2];
+        data[2] = tSize[1];
+        data[3] = tSize[0];
+        data[4] = tCommand[3];
+        data[5] = tCommand[2];
+        data[6] = tCommand[1];
+        data[7] = tCommand[0];
+        data[8] = tDestination[3];
+        data[9] = tDestination[2];
+        data[10] = tDestination[1];
+        data[11] = tDestination[0];
+        data[12] = tSource[3];
+        data[13] = tSource[2];
+        data[14] = tSource[1];
+        data[15] = tSource[0];
+        for(i = 0; i < tData.length; i++){
+            data[16 + i] = tData[i];
+        }
+
+        console.log(data);
         return data;
     }
 };
 
 //Box Class
 function Box() {
-    this.command = null;
-    this.destination = null;
-    this.source = null;
-    this.data = null;
-    this.size = null;
+    this.command = 0;
+    this.destination = 0;
+    this.source = 0;
+    this.data = "";
+    this.size = 0;
+};
+
+//UInt8 casting function
+function UInt32toUInt8(value) {
+    return [
+        value >> 24,
+        (value >> 24) << 8,
+        (value >> 24) << 16,
+        (value << 24) >> 24
+    ];
 };
