@@ -12,15 +12,7 @@ var SS = {
     Connect: function(ipaddress) {
         SS.socket = (new WebSocket("ws://" + ipaddress));
         //Socket on Open
-        SS.socket.onopen = function(event) {
-
-
-            //DEBUG
-            Log("Open")
-            Log("Sent Ping")
-            SS.Ping();
-            //DEBUG
-        };
+        SS.socket.onopen = function(event) {};
         //Socket on Receive Message
         SS.socket.onmessage = function(event) {
             b = SS.BoxData(event.data);
@@ -49,7 +41,6 @@ var SS = {
                 case SS.Constants.cPing: {
                     if(b.data == "0") {
                         SS.Ping(1);
-                        console.log("Ping Request from SS");
                     }
                     break;
                 }
@@ -57,9 +48,9 @@ var SS = {
 
         };
         //Socket Close
-        SS.socket.onclose = function(event) {
-            Log("Close")
-        };
+        SS.socket.onclose = function(event) {};
+        //Socket Error
+        SS.socket.onerror = function(event) {};
     },
     //Disconnect -: kill the connection with the SS
     Disconnect: function() {
@@ -213,12 +204,15 @@ function Box() {
 
 //Function to cast UInt32 to a UInt8[]
 function UInt32toUInt8(value) {
-    return [
+    console.log(value);
+    t =  [
         value >> 24,
-        (value >> 24) << 8,
-        (value >> 24) << 16,
+        (value << 8) >> 24,
+        (value << 16) >> 24,
         (value << 24) >> 24
     ];
+    console.log(t);
+    return t;
 };
 
 //Function to cast UInt8[] to UInt32

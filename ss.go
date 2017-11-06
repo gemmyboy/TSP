@@ -171,6 +171,7 @@ func (ss *SyncServer) processConnections() {
 			ss.connections.Set(id, con)
 
 			go ss.initialize(con, id)
+			time.Sleep(time.Millisecond * 1000)
 
 			//Increment ider & current
 			ss.muxIder.Lock()
@@ -226,8 +227,12 @@ func UnboxData(b *Box) []byte {
 //intialize -: intializes the connection, sanitizes odd connections, adjusts connection type (websocket)
 func (ss *SyncServer) initialize(conn net.Conn, id string) {
 	buffer := make([]byte, 8192)
+
 	conn.SetDeadline(time.Now().Add(time.Millisecond * 500))
 	num, err := conn.Read(buffer)
+	conn.SetDeadline(time.Time{}) //Reset Deadline or GoLang will kill you.
+
+	//log.Println(string(buffer[:num]))
 
 	if CheckBool(err) && string(buffer[:num][:14]) == "GET / HTTP/1.1" {
 		defer ss.route(conn, id, 1)		//WebSocket - (Browser)
@@ -258,14 +263,14 @@ func (ss *SyncServer) route(conn net.Conn, id string, cType int) {
 		} else {
 			//Wait to receive data, once done, send confirmation bit, and generate box
 			b = ss.receive(conn, cType)
+
+			//Error Checking Box
+			if b == nil {
+				b = &Box{command: cDisconnect}
+			}
 		}
 
 		//log.Println(string(b.data)) //DEBUG
-
-		//Error Checking Box
-		if b == nil {
-			b = &Box{command: cDisconnect}
-		}
 
 		//Switch Over Command Options
 		switch b.command {
@@ -673,7 +678,7 @@ func (ss *SyncServer) wssend(b *Box, conn net.Conn) {
 
 	//WebSocket required Header Code
 	header := make([]byte, 0, 2)
-	header = append(header, 129)
+	header = append(header, 130)
 	l := len(ub)
 	if l <= 125 {
 		header = append(header, byte(uint8(l)))
@@ -702,63 +707,143 @@ func (ss *SyncServer) wssend(b *Box, conn net.Conn) {
 
 //wsreceive -: (WebSocket only) receive data over the connection
 // -NOTE: Needs to be extended to handle multiple FRAMES!! >:O
+
+/*
+	Algorithm:
+		Initial Read
+		Discern Payload size
+		if payload size > bufsize
+			read again until payload size achieved
+		continue...
+*/
 func (ss *SyncServer) wsreceive(conn net.Conn) *Box {
 	var bData bytes.Buffer
+	bufSize := 8192
+	buffer := make([]byte, bufSize)
+	var num int		//DEBUG
+	var err error	//DEBUG
 
-	buffer := make([]byte, 8192)
-	num, err := conn.Read(buffer)
-	if err == io.EOF {
-		return nil
-	} else if err, ok := err.(net.Error); ok && err.Timeout() {
-		/*
+	//WebSocket Header Vars
+	var payloadlen1 uint8
+	var payloadlen2 uint16
+	var payloadlen3 uint64
 
-			TIMEOUT Issue needs to be FIXED! -Gem
+	//Initial Read:
+	num, err = conn.Read(buffer)
+	buffer = buffer[:num]
 
-
-		*/
-		log.Println("TIMEOUT", err)
-		ss.wssend(&Box{command: cPing, data: []byte{0}}, conn)
-	} else if err != nil {
-		log.Println("Failed to receive:", err)
-		return nil
-	} else if num < 20 {
-		log.Println("(WS)Header error:", num, buffer[:num], string(buffer[:num]))
-		return nil
-	}
-	buffer = buffer[:num+1]
-	
-	//log.Println(buffer[:num], err, num)//DEBUG
-	
-	for buffer[0] == 130 {
-
-		startInd := 6
-
-		length := startInd + (int(buffer[1]) - 128)
-
-		buf2 := buffer[:length]
-
-		mask := make([]byte, 4)
-		mask[0] = buf2[startInd-4]
-		mask[1] = buf2[startInd-3]
-		mask[2] = buf2[startInd-2]
-		mask[3] = buf2[startInd-1]
-
-		b := buf2[startInd:]
-
-		for i := range b {
-			b[i] = b[i] ^ mask[i%4]
-		}
-		bData.Write(b)
-		buffer = buffer[length:]
-	}
+	//Disconnect Check - Websockets are finicky
 	if buffer[0] == 136 {
+		conn = nil
+		return &Box{command: cDisconnect}
+	}
+
+	//Error Check
+	if err != nil {
+		if err == io.EOF {
+			log.Println("EOF", err)
+			return nil
+		} else if err, ok := err.(net.Error); ok && err.Timeout() {
+			log.Println("Timeout:", err, " | ", buffer[:num], num)
+			return nil
+		} else {
+			log.Println("An error occurred:", err)
+			return nil
+		}
+	} else if num == 0 {
 		return nil
+	}
+
+	//Ping Check
+	if buffer[0] == 138 {
+		//Standard Pong Message - do nothing
+	} else if buffer[0] == 137{
+		//Standard Ping Message - respond
+		conn.Write([]byte{byte(uint8(138)), byte(uint8(0))})
+	}
+
+
+	//Payload Validation Check -: Discern Payload Size
+	//	(It's possible we didn't read the entire frame)
+	payloadlen1 = uint8((buffer[1] << 1) >> 1)
+
+	if payloadlen1 == 126 {
+		payloadlen2 = binary.BigEndian.Uint16([]byte{buffer[2], buffer[3]})
+		total := num
+		for payloadlen2 > uint16(total) {
+			tBuf := make([]byte, bufSize)
+			num, _ = conn.Read(tBuf)
+			tBuf = tBuf[:num]
+			total += num
+			buffer = append(buffer, tBuf[:num]...)
+		}
+		buffer = buffer[:total]
+	} else if payloadlen1 == 127 {
+		payloadlen3 = binary.BigEndian.Uint64([]byte{buffer[2], buffer[3], buffer[4], buffer[5], buffer[6], buffer[7], buffer[8], buffer[9]})
+		total := num
+		for payloadlen3 > uint64(total) {
+			tBuf := make([]byte, bufSize)
+			num, _ = conn.Read(tBuf)
+			tBuf = tBuf[:num]
+			total += num
+			buffer = append(buffer, tBuf[:num]...)
+		}
+		buffer = buffer[:total]
+	} else {
+		buffer = buffer[:num]
+	}
+
+	//Process the Frames (Could be more than 1)
+	for buffer[0] == 130 {
+		//fin := uint8(buffer[0] >> 7)
+		//opcode := uint8((buffer[0] << 4) >> 4)
+		//maskbit := uint8(buffer[1] >> 7)
+		payloadlen1 = uint8((buffer[1] << 1) >> 1)
+
+		//log.Println("fin:", fin, "opcode:", opcode, "maskbit:", maskbit) //DEBUG
+
+		if payloadlen1 == 126 {
+			payloadlen2 = binary.BigEndian.Uint16([]byte{buffer[2], buffer[3]})
+		} else if payloadlen1 == 127 {
+			payloadlen3 = binary.BigEndian.Uint64([]byte{buffer[2], buffer[3], buffer[4], buffer[5], buffer[6], buffer[7], buffer[8], buffer[9]})
+		}
+
+		//log.Println(payloadlen1, payloadlen2, payloadlen3) //DEBUG
+		
+		maskkey := make([]byte, 4)
+		if payloadlen1 <= 125 {
+			maskkey[0] = buffer[2]
+			maskkey[1] = buffer[3]
+			maskkey[2] = buffer[4]
+			maskkey[3] = buffer[5]
+			buffer = buffer[6:]
+			log.Println(len(buffer))
+		} else if payloadlen1 == 126 {
+			maskkey[0] = buffer[4]
+			maskkey[1] = buffer[5]
+			maskkey[2] = buffer[6]
+			maskkey[3] = buffer[7]
+			buffer = buffer[8:]
+			log.Println(len(buffer))
+		} else if payloadlen1 == 127 {
+			maskkey[0] = buffer[10]
+			maskkey[1] = buffer[11]
+			maskkey[2] = buffer[12]
+			maskkey[3] = buffer[13]
+			buffer = buffer[14:]
+		}
+
+		for i := range buffer {
+			buffer[i] = buffer[i] ^ maskkey[i%4]
+		}
+		bData.Write(buffer)
 	}
 	data := bData.Bytes()
+	
 
 	//Create Box to view data
 	b := BoxData(data)
-	//log.Println(b.command, string(b.data)) //DEBUG
+	//log.Println(b.command, len(b.data)) //DEBUG
 
 	return b
 }//End wsreceive()

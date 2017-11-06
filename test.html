@@ -9,9 +9,8 @@
     </body>
 </html>
 <script>
-    $(document).ready(function(){
-        SS.Connect("localhost:4444");
-    });
+    SS.Connect("127.0.0.1:4444");
+    
 
     var Log = function(data) {
         $("body").append($("<p style=\"background: white; padding: 2px;\" />").text(data));
