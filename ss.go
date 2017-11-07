@@ -706,16 +706,6 @@ func (ss *SyncServer) wssend(b *Box, conn net.Conn) {
 }//End wssend()
 
 //wsreceive -: (WebSocket only) receive data over the connection
-// -NOTE: Needs to be extended to handle multiple FRAMES!! >:O
-
-/*
-	Algorithm:
-		Initial Read
-		Discern Payload size
-		if payload size > bufsize
-			read again until payload size achieved
-		continue...
-*/
 func (ss *SyncServer) wsreceive(conn net.Conn) *Box {
 	var bData bytes.Buffer
 	bufSize := 8192
@@ -764,7 +754,7 @@ func (ss *SyncServer) wsreceive(conn net.Conn) *Box {
 
 
 	//Payload Validation Check -: Discern Payload Size
-	//	(It's possible we didn't read the entire frame)
+	//	(It's possible we didn't read the entire frame in the initial read)
 	payloadlen1 = uint8((buffer[1] << 1) >> 1)
 
 	if payloadlen1 == 126 {
@@ -795,9 +785,9 @@ func (ss *SyncServer) wsreceive(conn net.Conn) *Box {
 
 	//Process the Frames (Could be more than 1)
 	for buffer[0] == 130 {
-		//fin := uint8(buffer[0] >> 7)
-		//opcode := uint8((buffer[0] << 4) >> 4)
-		//maskbit := uint8(buffer[1] >> 7)
+		//fin := uint8(buffer[0] >> 7)				//DEBUG
+		//opcode := uint8((buffer[0] << 4) >> 4)	//DEBUG
+		//maskbit := uint8(buffer[1] >> 7)			//DEBUG
 		payloadlen1 = uint8((buffer[1] << 1) >> 1)
 
 		//log.Println("fin:", fin, "opcode:", opcode, "maskbit:", maskbit) //DEBUG
@@ -879,4 +869,4 @@ func OptionalParamInt(oType []int) int {
 	} else {
 		return oType[0]
 	}
-}//End OptionalParamInt
+}//End OptionalParamInt()

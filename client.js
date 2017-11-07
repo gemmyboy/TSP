@@ -126,6 +126,9 @@ var SS = {
     Send: function(boxdata) {
         SS.socket.send(SS.UnBoxData(boxdata));
     },
+    Receive: function() {
+        return SS.receiveboxqueue.shift();
+    },
     //Ping -: ping the SS to make sure it's there
     Ping: function(v) {
         if (v == undefined) { v = 0; }
