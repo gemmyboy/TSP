@@ -122,10 +122,11 @@ var SS = {
         cSend: 7,
         cSendInd: 8
     },
-    //Send - : shoot a Box over to the SS
+    //Send -: shoot a Box over to the SS
     Send: function(boxdata) {
         SS.socket.send(SS.UnBoxData(boxdata));
     },
+    //Receive -: 
     Receive: function() {
         return SS.receiveboxqueue.shift();
     },

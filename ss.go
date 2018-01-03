@@ -3,8 +3,8 @@ package tsp
 import (
 	"bytes"
 	"crypto/sha1"
-	"encoding/binary"
 	"encoding/base64"
+	"encoding/binary"
 	//"unicode/utf8"
 	"io"
 	"log"
@@ -103,13 +103,13 @@ const (
 	cDisconnect uint32 = 0 //Client is disconnecting
 	cPing       uint32 = 1 //Check to see if SS is alive and receiving
 
-	cList      uint32 = 2 //List out groups on SS and send back to connection
-	cCreate    uint32 = 3 //Create a group
-	cDelete    uint32 = 4 //Delete a group
-	cJoin      uint32 = 5 //Join a group
-	cLeave     uint32 = 6 //Leave a group
-	cSend      uint32 = 7 //Send data to a group
-	cSendInd   uint32 = 8 //Send data to an individual in a group
+	cList    uint32 = 2 //List out groups on SS and send back to connection
+	cCreate  uint32 = 3 //Create a group
+	cDelete  uint32 = 4 //Delete a group
+	cJoin    uint32 = 5 //Join a group
+	cLeave   uint32 = 6 //Leave a group
+	cSend    uint32 = 7 //Send data to a group
+	cSendInd uint32 = 8 //Send data to an individual in a group
 )
 
 //NewSyncServer -: Creates new SyncServer
@@ -132,13 +132,16 @@ func NewSyncServer(address string) *SyncServer {
 func (ss *SyncServer) Start() {
 	ss.isRunning = true
 	go ss.processConnections()
-	time.Sleep(time.Millisecond * 500)
+	time.Sleep(time.Millisecond * 1000)
 } //End Start()
 
 //Stop -: Stops SS and kills program
 func (ss *SyncServer) Stop() {
+	for t := range ss.connections.IterBuffered() {
+		t.Val.(net.Conn).SetReadDeadline(time.Now())
+	}
 	ss.isRunning = false
-	time.Sleep(time.Millisecond * 500)
+	time.Sleep(time.Millisecond * 5000)
 } //End Stop()
 
 //SetCapacity -: Sets Capacity of the SS
@@ -222,7 +225,7 @@ func UnboxData(b *Box) []byte {
 	buf.Write(b.data)
 
 	return buf.Bytes()
-} //End unbox()
+} //End UnboxData()
 
 //intialize -: intializes the connection, sanitizes odd connections, adjusts connection type (websocket)
 func (ss *SyncServer) initialize(conn net.Conn, id string) {
@@ -235,7 +238,7 @@ func (ss *SyncServer) initialize(conn net.Conn, id string) {
 	//log.Println(string(buffer[:num]))
 
 	if CheckBool(err) && string(buffer[:num][:14]) == "GET / HTTP/1.1" {
-		defer ss.route(conn, id, 1)		//WebSocket - (Browser)
+		defer ss.route(conn, id, 1) //WebSocket - (Browser)
 
 		//Request Connection Upgrade with the Browser
 		uRes := strings.Split(string(buffer[:num]), "Sec-WebSocket-Key: ")
@@ -246,9 +249,9 @@ func (ss *SyncServer) initialize(conn net.Conn, id string) {
 		v := base64.StdEncoding.EncodeToString(b[:])
 		conn.Write([]byte("HTTP/1.1 101 Switching Protocols \r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept:" + v + "\r\n\r\n"))
 	} else {
-		defer ss.route(conn, id, 0)				//TCP - (Normal)
+		defer ss.route(conn, id, 0) //TCP - (Normal)
 	}
-}//End initialize()
+} //End initialize()
 
 //route -: performs general routing logic for given connection
 func (ss *SyncServer) route(conn net.Conn, id string, cType int) {
@@ -271,6 +274,7 @@ func (ss *SyncServer) route(conn net.Conn, id string, cType int) {
 		}
 
 		//log.Println(string(b.data)) //DEBUG
+		//log.Println(b)              //DEBUG
 
 		//Switch Over Command Options
 		switch b.command {
@@ -310,6 +314,8 @@ func (ss *SyncServer) route(conn net.Conn, id string, cType int) {
 		time.Sleep(time.Millisecond * 1)
 	} //End for
 
+	//SyncServer is closing so forcibly disconnect
+	ss.disconnect(conn, id)
 } //End route()
 //---------------------------------------------------
 //-- Group Functions
@@ -574,26 +580,26 @@ func (ss *SyncServer) send(b *Box, conn net.Conn, cType ...int) {
 		log.Println("Box dropped, connection type not found.")
 	}
 
-}//End send()
+} //End send()
 
 //receive -: choose the correct connection type
 //		0 - TCP Connection
 //		1 - WebSocket Connection
 func (ss *SyncServer) receive(conn net.Conn, cType ...int) *Box {
 	tType := OptionalParamInt(cType)
-	
-		switch tType {
-		case 0:
-			return ss.tcpreceive(conn)
-		case 1:
-			return ss.wsreceive(conn)
-		default:
-			log.Println("Box dropped, connection type not found.")
-			return nil
-		}	
-}//End receive()
 
-//tcpsend -: (TCP only) Sends data and waits for confirmation
+	switch tType {
+	case 0:
+		return ss.tcpreceive(conn)
+	case 1:
+		return ss.wsreceive(conn)
+	default:
+		log.Println("SS-Box dropped, connection type not found.")
+		return nil
+	}
+} //End receive()
+
+//tcpsend -: (TCP only) Sends data
 func (ss *SyncServer) tcpsend(b *Box, conn net.Conn) {
 	ub := UnboxData(b)
 
@@ -604,7 +610,7 @@ func (ss *SyncServer) tcpsend(b *Box, conn net.Conn) {
 	num, err := conn.Write(ub)
 	ss.muxSend.Unlock()
 	if err != nil {
-		log.Println("Box failed to send of size:", num, len(ub))
+		log.Println("SS-Box failed to send of size:", num, len(ub))
 		return
 	}
 
@@ -613,7 +619,7 @@ func (ss *SyncServer) tcpsend(b *Box, conn net.Conn) {
 	return
 } //End tcpsend()
 
-//tcpreceive -: (TCP only) Receives data, sends confirmation byte, and then returns box
+//tcpreceive -: (TCP only) Receives data and returns box
 func (ss *SyncServer) tcpreceive(conn net.Conn) *Box {
 	var data []byte
 	total := 4
@@ -623,13 +629,15 @@ func (ss *SyncServer) tcpreceive(conn net.Conn) *Box {
 	//Grab the size after the first read to determine how much more data to read
 	tbuf := make([]byte, 4)
 	num, err := conn.Read(tbuf)
-	if err == io.EOF {
+	if !ss.isRunning {
 		return nil
-	} else if err != nil {
-		log.Println("Failed to receive:", err)
+	} else if err == io.EOF {
+		return nil
+	} else if err != nil && ss.isRunning {
+		log.Println("SS-TCP-Failed to receive:", err)
 		return nil
 	} else if num != 4 {
-		log.Println("Didn't receive size:", num)
+		log.Println("SS-TCP-Didn't receive size:", num)
 		return nil
 	}
 
@@ -659,10 +667,9 @@ func (ss *SyncServer) tcpreceive(conn net.Conn) *Box {
 		//Accumulate current data size and buffered data
 		total += num
 
-		log.Println("Total:", total, "- Size:", int(size), "- Buffer Size:", len(data)) //DEBUG
+		//log.Println("Total:", total, "- Size:", int(size), "- Buffer Size:", len(data)) //DEBUG
 	}
-	log.Println("END-Total:", total, "- Size:", int(size), "- Buffer Size:", len(data)) //DEBUG
-	
+	//log.Println("END-Total:", total, "- Size:", int(size), "- Buffer Size:", len(data)) //DEBUG
 
 	//Create Box to view data
 	b := BoxData(data)
@@ -703,15 +710,15 @@ func (ss *SyncServer) wssend(b *Box, conn net.Conn) {
 	time.Sleep(time.Millisecond * 1)
 	return
 
-}//End wssend()
+} //End wssend()
 
 //wsreceive -: (WebSocket only) receive data over the connection
 func (ss *SyncServer) wsreceive(conn net.Conn) *Box {
 	var bData bytes.Buffer
 	bufSize := 8192
 	buffer := make([]byte, bufSize)
-	var num int		//DEBUG
-	var err error	//DEBUG
+	var num int   //DEBUG
+	var err error //DEBUG
 
 	//WebSocket Header Vars
 	var payloadlen1 uint8
@@ -747,11 +754,10 @@ func (ss *SyncServer) wsreceive(conn net.Conn) *Box {
 	//Ping Check
 	if buffer[0] == 138 {
 		//Standard Pong Message - do nothing
-	} else if buffer[0] == 137{
+	} else if buffer[0] == 137 {
 		//Standard Ping Message - respond
 		conn.Write([]byte{byte(uint8(138)), byte(uint8(0))})
 	}
-
 
 	//Payload Validation Check -: Discern Payload Size
 	//	(It's possible we didn't read the entire frame in the initial read)
@@ -799,7 +805,7 @@ func (ss *SyncServer) wsreceive(conn net.Conn) *Box {
 		}
 
 		//log.Println(payloadlen1, payloadlen2, payloadlen3) //DEBUG
-		
+
 		maskkey := make([]byte, 4)
 		if payloadlen1 <= 125 {
 			maskkey[0] = buffer[2]
@@ -829,14 +835,13 @@ func (ss *SyncServer) wsreceive(conn net.Conn) *Box {
 		bData.Write(buffer)
 	}
 	data := bData.Bytes()
-	
 
 	//Create Box to view data
 	b := BoxData(data)
 	//log.Println(b.command, len(b.data)) //DEBUG
 
 	return b
-}//End wsreceive()
+} //End wsreceive()
 
 //Check -: just checks for error, outputs error but does not kill
 func Check(err error) bool {
@@ -853,7 +858,7 @@ func CheckBool(err error) bool {
 		return false
 	}
 	return true
-}//End CheckBool()
+} //End CheckBool()
 
 //CheckKill -: Checks Error, if there is one, it logs it and kills program
 func CheckKill(err error) {
@@ -869,4 +874,4 @@ func OptionalParamInt(oType []int) int {
 	} else {
 		return oType[0]
 	}
-}//End OptionalParamInt()
+} //End OptionalParamInt()

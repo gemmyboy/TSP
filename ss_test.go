@@ -1,8 +1,6 @@
 package tsp
 
 import (
-	"log"
-	"net"
 	"sync"
 	"testing"
 	"time"
@@ -33,15 +31,9 @@ func TestConnectDisconnect(t *testing.T) {
 	wait := true
 
 	go func() {
-		conn, err := net.Dial("tcp", "localhost:4444")
-		if err != nil {
-			t.Error("Failed to connect to SS", err)
-		}
-
-		_, er := conn.Write(UnboxData(&Box{command: cDisconnect, destination: 0, data: nil}))
-		if er != nil {
-			t.Error("Failed to send box to SS", er)
-		}
+		c := NewClient("localhost:4444")
+		c.Connect()
+		c.Disconnect()
 
 		wait = false
 	}()
@@ -62,16 +54,12 @@ func TestMassiveDataLoad(t *testing.T) {
 	wait := true
 
 	go func() {
-		conn, err := net.Dial("tcp", "localhost:4444")
-		if err != nil {
-			t.Error("Failed to connect to SS", err)
-		}
+		c := NewClient("localhost:4444")
+		c.Connect()
 
 		buf := make([]byte, 99999999)
-		_, er := conn.Write(UnboxData(&Box{command: cDisconnect, destination: 0, data: buf})) //1 Gigabyte
-		if er != nil {
-			t.Error("Failed to send box to SS", er)
-		}
+		c.SendBox(&Box{command: cDisconnect, destination: 0, data: buf}) //1 Gigabyte
+		c.Disconnect()
 
 		wait = false
 	}()
@@ -96,15 +84,11 @@ func xTestConnections(x int, address string, t *testing.T) {
 
 	for i := 0; i < x; i++ {
 		go func() {
-			conn, err := net.Dial("tcp", address)
-			if err != nil {
-				t.Error("Failed to connect to SS", err)
-			}
+			c := NewClient(address)
+			c.Connect()
 
-			_, er := conn.Write(UnboxData(&Box{command: cDisconnect, destination: 0, data: make([]byte, 1024)}))
-			if er != nil {
-				t.Error("Failed to send box to SS", er)
-			}
+			c.SendBox(&Box{command: cDisconnect, destination: 0, data: make([]byte, 1024)})
+			//c.Disconnect()
 
 			m.Lock()
 			total++
@@ -121,10 +105,22 @@ func xTestConnections(x int, address string, t *testing.T) {
 	ss.Stop()
 } //xTestConnections()
 
+//Test a 100 connections being made to the SS at one time.
+func TestHundredConnections(t *testing.T) {
+	xTestConnections(100, "localhost:4445", t)
+} //End TestHundredConnections()
+
+/*
+//Test a 500 connections being made to the SS at one time.
+func TestFiveHundredConnections(t *testing.T) {
+	xTestConnections(500, "localhost:4446", t)
+} //End TestFiveHundredConnections()
+
 //Test a 1000 connections being made to the SS at one time.
 func TestThousandConnections(t *testing.T) {
 	xTestConnections(1000, "localhost:4445", t)
 } //End TestThousandConnections()
+
 
 //Test a 2000 connections being made to the SS at one time.
 func TestTwoThousandConnections(t *testing.T) {
@@ -636,3 +632,5 @@ func TestFiveThousandPingPong(t *testing.T) {
 // func TestTenThousandPingPong(t *testing.T) {
 // 	xTestPingPong(10000, "localhost:4459", t)
 // } //End TestTenThousandPingPong()
+
+*/

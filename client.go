@@ -27,6 +27,8 @@ type Client struct {
 	muxReceive  *sync.Mutex       //Mutex to control Receive
 	receiveChan chan *Box         //Queue of Boxes client has received
 	sendChan    chan *Box         //Queue of Boxes client needs to send
+	closeFlag   bool              //Disconnect was called
+	closeGroup  *sync.WaitGroup   //Wait for internal goroutines to exit
 } //End Client
 
 //---------------Basic Functionality-----------------------------
@@ -40,6 +42,9 @@ func NewClient(connectString string) *Client {
 	c.muxReceive = &sync.Mutex{}
 	c.receiveChan = make(chan *Box, 1000)
 	c.sendChan = make(chan *Box, 1000)
+	c.closeFlag = false
+	c.closeGroup = &sync.WaitGroup{}
+	c.closeGroup.Add(2)
 	return c
 } //End NewClient()
 
@@ -53,48 +58,59 @@ func (c *Client) Connect() {
 
 	go c.processReceive() //Goroutine for Receiving Data
 	go c.processSend()    //Goroutine for Sending Data
-	time.Sleep(time.Millisecond * 500)
 
-	c.GroupList()
+	time.Sleep(time.Millisecond * 1000)
 } //End Connect()
 
 //Disconnect -: Close the connection
 func (c *Client) Disconnect() {
-	//Tell SS we're disconnecting
+
+	//Make function call Atomic for each Connect call
+	if c.closeFlag {
+		return
+	}
+	c.closeFlag = true
+	c.conn.SetReadDeadline(time.Now())
+
+	//Tell SS that it's time to die quietly
 	c.SendBox(&Box{command: cDisconnect})
 
-	//Now disconnect
-	c.muxReceive.Lock()
-	c.muxSend.Lock()
-	err := c.conn.Close()
-	Check(err)
-	c.muxReceive.Unlock()
-	c.muxSend.Unlock()
+	//Wait until processReceive & processSend exit
+	c.closeGroup.Wait()
 
+	//Close the channels
 	close(c.receiveChan)
 	close(c.sendChan)
+
+	//Destroy/Disconnect because this is never graceful
+	err := c.conn.Close()
+	Check(err)
 } //End Disconnect()
 
 //process -: continuously receive and process incoming data
 func (c *Client) processReceive() {
-	for {
-		//Connection nulls out of hardware can't keep up
+	defer func() { c.closeGroup.Done() }()
+
+	for !c.closeFlag {
+		//Connection nulls out if hardware can't keep up
 		b := &Box{}
-		if c.conn == nil {
+
+		//Wait to receive data, once done, send confirmation bit, and generate box
+		b = c.receive()
+
+		//Error Checking Box
+		if b == nil {
 			b = &Box{command: cDisconnect}
-		} else {
-			//Wait to receive data, once done, send confirmation bit, and generate box
-			b = c.receive()
 		}
 
 		switch b.command {
 		case cList:
 			{
-				buf := make([]byte, 8192)
-				n, err := c.conn.Read(buf)
-				Check(err)
+				// buf := make([]byte, 8192)
+				// n, err := c.conn.Read(buf)
+				// Check(err)
 
-				b := BoxData(buf[:n])
+				// b := BoxData(buf[:n])
 
 				//Grab list
 				str := string(b.data)
@@ -120,6 +136,10 @@ func (c *Client) processReceive() {
 				c.Disconnect()
 				return
 			}
+		default:
+			{
+				return /*Error State*/
+			}
 		} //End switch
 		time.Sleep(time.Millisecond * 1)
 	} //End for
@@ -127,9 +147,22 @@ func (c *Client) processReceive() {
 
 //processSend -: continuously process the queue of boxes to send.
 func (c *Client) processSend() {
-	for c.conn != nil {
-		b := <-c.sendChan
-		c.send(b)
+	defer func() { c.closeGroup.Done() }()
+	for {
+		select {
+		case b := <-c.sendChan:
+			{
+				if b != nil {
+					c.send(b)
+				}
+			} //End case
+		default:
+			{
+				if c.closeFlag {
+					return
+				}
+			} //End case
+		} //End select
 	} //End for
 } //End processSend()
 
@@ -141,7 +174,11 @@ func (c *Client) Receive() (int, []byte) {
 
 //ReceiveBox -: DeQueue data box to process
 func (c *Client) ReceiveBox() *Box {
-	return <-c.receiveChan
+	b := <-c.receiveChan
+	if b == nil {
+		return &Box{command: cDisconnect}
+	}
+	return b
 } //End ReceiveBox()
 
 //ReceiveChan -: Return the channel to process
@@ -209,10 +246,10 @@ func (c *Client) send(b *Box) {
 
 	//Send box over connection
 	c.muxSend.Lock()
-	num, err := c.conn.Write(ub)
+	_, err := c.conn.Write(ub)
 	c.muxSend.Unlock()
 	if err != nil {
-		log.Println("Box failed to send of size:", num, len(ub))
+		//log.Println("Client-Box failed to send of size:", num, len(ub))
 		return
 	}
 
@@ -234,13 +271,17 @@ func (c *Client) receive() *Box {
 	//Grab the size after the first read to determine how much more data to read
 	tbuf := make([]byte, 4)
 	num, err := c.conn.Read(tbuf)
-	if err == io.EOF {
+	if c.closeFlag {
+		return nil
+	} else if err == io.EOF {
 		return nil
 	} else if err != nil {
-		log.Println("Failed to receive:", err)
+		c.closeFlag = true
+		//log.Println("Client-Failed to receive:", err)
 		return nil
 	} else if num != 4 {
-		log.Println("Didn't receive size:", num)
+		//log.Println("Client-Didn't receive size:", num)
+		c.closeFlag = true
 		return nil
 	}
 
