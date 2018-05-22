@@ -87,6 +87,11 @@ func (c *Client) Disconnect() {
 	Check(err)
 } //End Disconnect()
 
+//Ping -: Ping the SS to make sure it's still alive.
+func (c *Client) Ping() {
+	c.SendBox(&Box{command: cPing, data: []byte("0")})
+} //End Ping()
+
 //process -: continuously receive and process incoming data
 func (c *Client) processReceive() {
 	defer func() { c.closeGroup.Done() }()
@@ -135,6 +140,10 @@ func (c *Client) processReceive() {
 			{
 				c.Disconnect()
 				return
+			}
+		case cPing:
+			{
+				c.receiveChan <- b
 			}
 		default:
 			{
@@ -188,7 +197,12 @@ func (c *Client) ReceiveChan() chan *Box {
 
 //Send -: Send data to SS | Easy Send
 func (c *Client) Send(name string, data []byte) {
-	c.SendBox(&Box{command: cSend, destination: c.gName[name], data: data})
+	v, ok := c.gName[name]
+	if !ok {
+		log.Println("Group doesn't exist, dropping box")
+		return
+	}
+	c.SendBox(&Box{command: cSend, destination: v, data: data})
 } //End Send()
 
 //SendBox -: Send data box to SS | Advanced Send
@@ -200,42 +214,40 @@ func (c *Client) SendBox(b *Box) {
 
 //GroupCreate -: Create a group on the SS
 func (c *Client) GroupCreate(name, password, mpassword string, capacity int) {
-	c.send(&Box{command: cCreate, data: []byte(name + "," + password + "," + mpassword + "," + string(capacity))})
-	c.GroupList()
+	c.SendBox(&Box{command: cCreate, data: []byte(name + "," + password + "," + mpassword + "," + string(capacity))})
 } //End GroupCreate()
 
 //GroupDelete -: Delete a group on the SS
 func (c *Client) GroupDelete(name string) {
 	if v, ok := c.gName[name]; ok {
-		c.send(&Box{command: cDelete, destination: uint32(v)})
-		c.GroupList()
-	} else {
-		c.GroupList()
+		c.SendBox(&Box{command: cDelete, destination: uint32(v)})
 	}
 } //End GroupDelete()
 
 //GroupJoin -: Join an existing group on the SS
-func (c *Client) GroupJoin(name, password, mpassword string) {
+func (c *Client) GroupJoin(name, password string) {
 	if v, ok := c.gName[name]; ok {
-		c.send(&Box{command: cJoin, destination: uint32(v), data: []byte(password + "," + mpassword)})
-	} else {
-		c.GroupList()
+		c.SendBox(&Box{command: cJoin, destination: uint32(v), data: []byte(password)})
+	}
+} //End GroupJoin()
+
+//GroupMasterJoin -: Join an existing group on the SS
+func (c *Client) GroupMasterJoin(name, password, mpassword string) {
+	if v, ok := c.gName[name]; ok {
+		c.SendBox(&Box{command: cJoin, destination: uint32(v), data: []byte(password + "," + mpassword)})
 	}
 } //End GroupJoin()
 
 //GroupLeave -: Leave an existing group on the SS
 func (c *Client) GroupLeave(name string) {
 	if v, ok := c.gName[name]; ok {
-		c.send(&Box{command: cLeave, destination: uint32(v)})
-		c.GroupList()
-	} else {
-		c.GroupList()
+		c.SendBox(&Box{command: cLeave, destination: uint32(v)})
 	}
 } //End GroupLeave()
 
 //GroupList -: Retrieve a list of existing groups on the SS
 func (c *Client) GroupList() {
-	c.send(&Box{command: cList, data: nil})
+	c.SendBox(&Box{command: cList, data: nil})
 } //End GroupList()
 
 //---------------Helper Functionality-----------------------------

@@ -397,7 +397,7 @@ func (ss *SyncServer) groupCreate(b *Box) {
 		return
 	}
 
-	//Parse Capacity for a room
+	//Parse Capacity for a group
 	cap, err := strconv.ParseUint(data[3], 10, 64)
 	if err != nil {
 		cap = 10
@@ -409,7 +409,7 @@ func (ss *SyncServer) groupCreate(b *Box) {
 	ss.ider++
 	ss.muxIder.Unlock()
 
-	//Checking if room already exists
+	//Checking if group already exists
 	tID, tB := ss.groupsNameToID.Get(data[0])
 	if tB {
 		if ss.groups.Has(tID.(string)) {
