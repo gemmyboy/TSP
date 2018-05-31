@@ -174,12 +174,10 @@ func TestGroupCreate(t *testing.T) {
 
 	//Create a Group
 	c.GroupCreate("Test1", "Password", "MPassword", 20)
-
-	time.Sleep(100 * time.Millisecond)
+	c.GroupList()
 
 	//Check local group listing
-	_, ok := c.gName["Test1"]
-	if !ok {
+	if !c.GroupWaitCheck("Test1") {
 		t.Error("Group Failed to be created and/or listed.")
 	}
 	
@@ -198,23 +196,19 @@ func TestGroupDelete(t *testing.T) {
 
 	//Create a Group
 	c.GroupCreate("Test1", "Password", "MPassword", 20)
-
-	time.Sleep(100 * time.Millisecond)
+	c.GroupList()
 
 	//Check local group listing
-	_, ok := c.gName["Test1"]
-	if !ok {
+	if !c.GroupWaitCheck("Test1") {
 		t.Error("Group Failed to be created and/or listed.")
 	}
 	
 	//Delete a Group
 	c.GroupDelete("Test1")
-
-	time.Sleep(100 * time.Millisecond)
+	c.GroupList()
 
 	//Check local group listing
-	_, ok = c.gName["Test1"]
-	if !ok {
+	if c.GroupCheck("Test1") {
 		t.Error("Group Failed to be deleted and/or listed.")
 	}
 
@@ -239,7 +233,7 @@ func TestGroupSendIndividual(t *testing.T) {
 		//Create a Group
 		c.GroupCreate("Test1", "Password", "MPassword", 20)
 		c.GroupList()
-		time.Sleep(time.Millisecond * 200)
+		c.GroupWaitCheck("Test1")
 
 		//Join as Master
 		c.GroupMasterJoin("Test1", "Password", "MPassword")
@@ -265,7 +259,7 @@ func TestGroupSendIndividual(t *testing.T) {
 		c.Connect()
 		c.GroupList()
 
-		time.Sleep(time.Millisecond * 200)
+		c.GroupWaitCheck("Test1")
 
 		//Join as Client
 		c.GroupJoin("Test1", "Password")

@@ -220,6 +220,7 @@ func (c *Client) GroupCreate(name, password, mpassword string, capacity int) {
 //GroupDelete -: Delete a group on the SS
 func (c *Client) GroupDelete(name string) {
 	if v, ok := c.gName[name]; ok {
+		delete(c.gName, name)
 		c.SendBox(&Box{command: cDelete, destination: uint32(v)})
 	}
 } //End GroupDelete()
@@ -249,6 +250,22 @@ func (c *Client) GroupLeave(name string) {
 func (c *Client) GroupList() {
 	c.SendBox(&Box{command: cList, data: nil})
 } //End GroupList()
+
+//GroupCheck -: Check if group exists yet
+func (c *Client) GroupCheck(gpName string) bool {
+	_, ok := c.gName[gpName]; return ok
+} //End GroupCheck()
+
+//GroupWaitCheck -: Pauses client until GroupCheck returns true but only retries some # of times.
+func (c *Client) GroupWaitCheck(gpName string) bool {
+	for i := 0; i < 20; i++ {
+		if c.GroupCheck(gpName) {
+			return true
+		}
+		time.Sleep(time.Millisecond * 100)
+	}
+	return false
+} //End GroupWaitCheck() 
 
 //---------------Helper Functionality-----------------------------
 
