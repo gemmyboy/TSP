@@ -4,6 +4,7 @@ import (
 	"sync"
 	"testing"
 	"time"
+	"strconv"
 	//"log"
 )
 
@@ -15,6 +16,19 @@ import (
 	To test fully: go test -v
 	To test individually: go test -v -run <NameOfTest>
 */
+
+
+func WaitChannel(c chan struct{}, n int) {
+	for i := 0; i < n; i++ {
+		<- c
+	}
+}
+
+func SendChannel(c chan struct{}, n int) {
+	for i := 0; i < n; i++ {
+		c <- struct{}{}
+	}
+}
 
 
 //Test Creating SS
@@ -87,6 +101,7 @@ func TestMassiveDataLoad(t *testing.T) {
 //xTestConnections -: Used to replicate accepting an extremely large number of connections, send some data, and then disconnect
 func xTestConnections(x int, address string, t *testing.T) {
 	ss := NewSyncServer(address)
+	chan1 := make(chan struct{}, x)
 
 	ss.SetCapacity(x)
 	ss.Start()
@@ -97,22 +112,18 @@ func xTestConnections(x int, address string, t *testing.T) {
 		go func() {
 			c := NewClient(address)
 			c.Connect()
-
-			c.SendBox(&Box{command: cDisconnect, destination: 0, data: make([]byte, 1024)})
-			//c.Disconnect()
+			c.Disconnect()
 
 			m.Lock()
 			total++
 			m.Unlock()
-
+			chan1 <- struct{}{}
 		}()
 		time.Sleep(time.Millisecond * 1)
 	}
 
 	//Wait until otherwise
-	for total < x {
-		time.Sleep(time.Millisecond * 100)
-	}
+	WaitChannel(chan1, x)
 	ss.Stop()
 } //xTestConnections()
 
@@ -177,7 +188,7 @@ func TestGroupCreate(t *testing.T) {
 	c.GroupList()
 
 	//Check local group listing
-	if !c.GroupWaitCheck("Test1") {
+	if !c.GroupCheck("Test1") {
 		t.Error("Group Failed to be created and/or listed.")
 	}
 	
@@ -199,11 +210,12 @@ func TestGroupDelete(t *testing.T) {
 	c.GroupList()
 
 	//Check local group listing
-	if !c.GroupWaitCheck("Test1") {
+	if !c.GroupCheck("Test1") {
 		t.Error("Group Failed to be created and/or listed.")
 	}
 	
 	//Delete a Group
+	c.GroupMasterJoin("Test1", "Password", "MPassword")
 	c.GroupDelete("Test1")
 	c.GroupList()
 
@@ -217,7 +229,7 @@ func TestGroupDelete(t *testing.T) {
 
 
 //Test Sending Data from Client-to-Client using SS as medium.
-func TestGroupSendIndividual(t *testing.T) {
+func TestGroupSend(t *testing.T) {
 	ss := NewSyncServer("localhost:4460")
 
 	ss.Start()
@@ -233,7 +245,7 @@ func TestGroupSendIndividual(t *testing.T) {
 		//Create a Group
 		c.GroupCreate("Test1", "Password", "MPassword", 20)
 		c.GroupList()
-		c.GroupWaitCheck("Test1")
+		c.GroupCheck("Test1")
 
 		//Join as Master
 		c.GroupMasterJoin("Test1", "Password", "MPassword")
@@ -259,7 +271,7 @@ func TestGroupSendIndividual(t *testing.T) {
 		c.Connect()
 		c.GroupList()
 
-		c.GroupWaitCheck("Test1")
+		c.GroupCheck("Test1")
 
 		//Join as Client
 		c.GroupJoin("Test1", "Password")
@@ -283,288 +295,211 @@ func TestGroupSendIndividual(t *testing.T) {
 	}
 
 	ss.Stop()
-} //End TestGroupSendIndividual()
+} //End TestGroupSend()
 
-/*
+
 //Test all membership functionality for Groups including Joining and Leaving
 func TestGroupAll(t *testing.T) {
 	ss := NewSyncServer("localhost:4451")
 	ss.Start()
 
 	//Connect to SS
-	conn, err := net.Dial("tcp", "localhost:4451")
-	if err != nil {
-		t.Error("Failed to connect to SS", err)
-	}
+	c := NewClient("localhost:4451")
+	c.Connect()
 
 	//Create a Group
-	ss.send(&Box{
-		command:     cCreate,
-		destination: uint32(0),
-		data:        []byte("Test1,Password,MPassword,20")}, conn)
-
-	//Request List of Groups
-	ss.send(&Box{
-		command:     cList,
-		destination: uint32(0),
-		data:        nil}, conn)
-
-	//Receive actual List
-	b := ss.receive(conn)
-	if b == nil {
-		t.Error("Failed to receive Box from SS")
-	}
-	if b.command != cList {
-		t.Error("Bad Box was received", b.command)
+	c.GroupCreate("Test1", "Password", "MPassword", 20)
+	c.GroupList()
+	if !c.GroupCheck("Test1") {
+		t.Fatal("Failed to Create Group")
 	}
 
-	data := string(b.data)
-	if data != "2,Test1;" {
-		t.Error("Bad data was returned in List Box: ", data)
+	//Join as Master
+	c.GroupMasterJoin("Test1", "Password", "MPassword")
+	c.GroupLeave("Test1")
+	c.GroupMasterJoin("Test1", "Password", "MPassword")
+	c.GroupLeave("Test1")
+	c.GroupMasterJoin("Test1", "Password", "MPassword")
+	c.GroupLeave("Test1")
+	c.GroupJoin("Test1", "Password")
+	c.GroupLeave("Test1")
+
+	c.GroupDelete("Test1")
+	c.GroupList()
+	if !c.GroupCheck("Test1") {
+		t.Fatal("False Delete Group Succeeded")
 	}
 
-	//Join a Group
-	ss.send(&Box{
-		command:     cJoin,
-		destination: uint32(2),
-		data:        []byte("Password")}, conn)
-
-	//Leave a Group
-	ss.send(&Box{
-		command:     cLeave,
-		destination: uint32(2)}, conn)
-
-	//Delete a Group
-	ss.send(&Box{
-		command:     cDelete,
-		destination: uint32(2)}, conn)
+	c.GroupMasterJoin("Test1", "Password", "MPassword")
+	c.GroupDelete("Test1")
+	c.GroupList()
+	if c.GroupCheck("Test1") {
+		t.Fatal("Failed to Delete Group")
+	}
 
 	ss.Stop()
 } //End TestGroupAll()
 
-//Test Sending Data back and forth between a Master Client and Regular Client
-func TestPingPong(t *testing.T) {
-	ss := NewSyncServer("localhost:4452")
-
+//Test Massive Amount of Clients connecting to SS
+func xMassConnectPing(t *testing.T, num int, address string) {
+	n := num
+	chan1 := make(chan struct{}, n)
+	chan2 := make(chan struct{}, n)
+	chan3 := make(chan struct{}, n)
+	ss := NewSyncServer(address)
 	ss.Start()
-	boolMaster := false
-	boolClient := false
 
 	//Kick off Master
 	go func() {
 		//Connect to SS
-		connM, err := net.Dial("tcp", "localhost:4452")
-		if err != nil {
-			t.Error("Failed to connect to SS", err)
-		}
+		c := NewClient(address)
+		c.Connect()
 
-		//Create a Group
-		ss.send(&Box{
-			command:     cCreate,
-			destination: uint32(0),
-			data:        []byte("Test1,Password,MPassword,20")}, connM)
+		SendChannel(chan2, n)
+		WaitChannel(chan1, n)
 
-		//Join as Master
-		ss.send(&Box{
-			command:     cJoin,
-			destination: uint32(2),
-			data:        []byte("Password,MPassword")}, connM)
-
-		b := ss.receive(connM)
-		if string(b.data) == "Hello There!" {
-			boolMaster = true
-		} else {
-			t.Error("Received a Bad Box on Master", string(b.data))
-		}
-
-		//Send Random Data
-		ss.send(&Box{
-			command:     cSend,
-			destination: uint32(2),
-			data:        []byte("Hello Back!")}, connM)
+		c.Disconnect()
 	}() //End Master
-	time.Sleep(time.Millisecond * 200)
 
-	//Kick off Client
-	go func() {
-		//Connect to SS
-		connC, err := net.Dial("tcp", "localhost:4452")
-		if err != nil {
-			t.Error("Failed to connect to SS", err)
-		}
+	//Kick off N Client(s)
+	for i := 0; i < n; i++ {
+		go func(l int, chan1 chan struct{}, chan2 chan struct{}, chan3 chan struct{}, address string) {
+			<- chan2
 
-		//Join as Client
-		ss.send(&Box{
-			command:     cJoin,
-			destination: uint32(2),
-			data:        []byte("Password")}, connC)
+			//Connect to SS
+			c := NewClient(address)
+			c.Connect()
+			c.Ping()
+			_, _ = c.Receive()
+			chan1 <- struct{}{}
 
-		//Send Random Data
-		ss.send(&Box{
-			command:     cSend,
-			destination: uint32(2),
-			data:        []byte("Hello There!")}, connC)
-
-		b := ss.receive(connC)
-		if string(b.data) == "Hello Back!" {
-			boolClient = true
-		} else {
-			t.Error("Received a Bad Box on Client", string(b.data))
-		}
-	}() //End Client
-
-	//Wait until otherwise
-	for !boolMaster || !boolClient {
-		time.Sleep(time.Millisecond * 500)
+			c.Disconnect()
+			chan3 <- struct{}{}
+		}(i, chan1, chan2, chan3, address) //End Client
 	}
-
+	WaitChannel(chan3, n)
 	ss.Stop()
-} //End TestPingPong
+}
 
-//Test X Client connections and 1 Master Connection.
-//	All X Clients will connect and send Master data.
-//	Once Master received from all X, it will broadcast
-//	one data to all Clients. Then everyone will disconnect.
-func xTestPingPong(x int, address string, t *testing.T) {
-	ss := NewSyncServer(address)
+//Test 10 Connections using Ping
+func Test10MassConnectPing(t *testing.T) {
+	xMassConnectPing(t, 10, "localhost:4463")
+}
 
-	ss.SetCapacity(x + 1)
-	ss.Start()
+//Test 50 Connections using Ping
+func Test50MassConnectPing(t *testing.T) {
+	xMassConnectPing(t, 50, "localhost:4464")
+}
+
+//Test 100 Connections using Ping
+func Test100MassConnectPing(t *testing.T) {
+	xMassConnectPing(t, 100, "localhost:4465")
+}
+
+/*
+//Test 1000 Connections using Ping
+func Test1000MassConnectPing(t *testing.T) {
+	xMassConnectPing(t, 1000, "localhost:4466")
+}
+
+//Test 2000 Connections using Ping
+func Test2000MassConnectPing(t *testing.T) {
+	xMassConnectPing(t, 2000, "localhost:4467")
+}
+*/
+
+//Test Master-Client(s) Grouping model by Counting to N
+func TestCounting(t *testing.T) {
+	n := 10
+	chan1 := make(chan struct{}, n)
+	chan2 := make(chan struct{}, n)
+	chan3 := make(chan struct{}, n)
 	boolMaster := 0
 	boolClient := 0
-	muxClient := new(sync.Mutex)
+
+	ss := NewSyncServer("localhost:4468")
+	ss.Start()
+
 
 	//Kick off Master
 	go func() {
 		//Connect to SS
-		connM, err := net.Dial("tcp", address)
-		if err != nil {
-			log.Println("Failed to connect to SS", err)
-			return
-		}
+		c := NewClient("localhost:4468")
+		c.Connect()
 
 		//Create a Group
-		ss.send(&Box{
-			command:     cCreate,
-			destination: uint32(0),
-			source:      uint32(0),
-			data:        []byte("Test1,Password,MPassword,20")}, connM)
+		c.GroupCreate("Test1", "Password", "MPassword", 20)
+		c.GroupList()
+		c.GroupCheck("Test1")
 
 		//Join as Master
-		ss.send(&Box{
-			command:     cJoin,
-			destination: uint32(2),
-			source:      uint32(0),
-			data:        []byte("Password,MPassword")}, connM)
+		c.GroupMasterJoin("Test1", "Password", "MPassword")
 
-		for boolMaster < x {
-			time.Sleep(time.Millisecond * 1)
-			b := ss.receive(connM)
-			if string(b.data) == "Hello There!" {
+		SendChannel(chan2, n)
+		WaitChannel(chan1, n)
+
+		for i := 0; i < n; i++ {
+			c.Send("Test1", []byte(strconv.Itoa(i + 1)))
+		}
+
+		count := 0
+		for count < n {
+			b := c.ReceiveBox()
+			value, _ := strconv.Atoi(string(b.Data()))
+			if value == n {
+				count++
 				boolMaster++
-			} else {
-				log.Println("Received a Bad Box on Master", string(b.data))
-				return
 			}
 		}
 
-		//Send Random Data
-		ss.send(&Box{
-			command:     cSend,
-			destination: uint32(2),
-			source:      uint32(0),
-			data:        []byte("Hello Back!")}, connM)
-		connM.Close()
+		c.Disconnect()
 	}() //End Master
-	time.Sleep(time.Millisecond * 200)
 
-	//Kick off all the Clients
-	for i := 0; i < x; i++ {
-		go func() {
-			me := i
+	//Kick off N Client(s)
+	for i := 0; i < n; i++ {
+		
+		go func(l int) {
+			<- chan2
+
 			//Connect to SS
-			connC, err := net.Dial("tcp", address)
-			if err != nil {
-				//log.Println("Failed to connect to SS", err)
-				return
-			}
+			c := NewClient("localhost:4468")
+			c.Connect()
+			c.GroupList()
 
-			//log.Println(me, " joined room")
+			c.GroupCheck("Test1")
 
 			//Join as Client
-			ss.send(&Box{
-				command:     cJoin,
-				destination: uint32(2),
-				source:      uint32(me),
-				data:        []byte("Password")}, connC)
+			c.GroupJoin("Test1", "Password")
+			chan1 <- struct{}{}
 
-			//Send Random Data
-			ss.send(&Box{
-				command:     cSend,
-				destination: uint32(2),
-				source:      uint32(me),
-				data:        []byte("Hello There!")}, connC)
 
-			b := ss.receive(connC)
-			if string(b.data) == "Hello Back!" {
-				muxClient.Lock()
-				boolClient++
-				muxClient.Unlock()
-			} else {
-				log.Println("Received a Bad Box on Client", string(b.data))
+			for {
+				b := c.ReceiveBox()
+				value, _ := strconv.Atoi(string(b.Data()))
+				if value == n {
+					boolClient++
+					break
+				}
+				c.Send("Test1", []byte(strconv.Itoa(value + 1)))
 			}
-			//log.Println(me, " received data and closing")
-			time.Sleep(time.Millisecond * 10)
-			connC.Close()
-		}() //End Client
-		time.Sleep(time.Millisecond * 1)
-	} //End for
+			c.Disconnect()
+			chan3 <- struct{}{}
+		}(i) //End Client
+	}
 
 	//Wait until otherwise
-	for boolMaster != x || boolClient != x {
-		time.Sleep(time.Millisecond * 250)
-		//log.Println(boolMaster, "-", boolClient)
+	WaitChannel(chan3, n)
+
+	c := NewClient("localhost:4468")
+	c.Connect()
+	c.GroupList()
+	c.GroupMasterJoin("Test1", "Password", "MPassword")
+	c.GroupDelete("Test1")
+	c.GroupList()
+	if c.GroupCheck("Test1") {
+		t.Fatal("Failed to Delete Group")
 	}
 
 	ss.Stop()
-} //End xTestPingPong()
+}
 
-//Test PingPong with 10 Clients
-func TestTenPingPong(t *testing.T) {
-	xTestPingPong(10, "localhost:4453", t)
-} //End TestTenPingPong()
-
-//Test PingPong with 25 Clients
-func TestTwentyFivePingPong(t *testing.T) {
-	xTestPingPong(25, "localhost:4454", t)
-} //End TestTwentyFivePingPong()
-
-//Test PingPong with 100 Clients
-func TestOneHundredPingPong(t *testing.T) {
-	xTestPingPong(100, "localhost:4455", t)
-} //End TestOneHundredPingPong()
-
-//Test PingPong with 1000 Clients
-func TestOneThousandPingPong(t *testing.T) {
-	xTestPingPong(1000, "localhost:4456", t)
-} //End TestOneThousandPingPong()
-
-//Test PingPong with 2000 Clients
-func TestTwoThousandPingPong(t *testing.T) {
-	xTestPingPong(2000, "localhost:4457", t)
-} //End TestTwoThousandPingPong()
-
-//Test PingPong with 5000 Clients
-func TestFiveThousandPingPong(t *testing.T) {
-	xTestPingPong(5000, "localhost:4458", t)
-} //End TestFiveThousandPingPong()
-
-//Test PingPong with 10000 Clients
-// --NOTE: Kind of unstable after 10000
-// --Somewhat unstable even at 10k.
-//	but has more to do with machine than software.
-// func TestTenThousandPingPong(t *testing.T) {
-// 	xTestPingPong(10000, "localhost:4459", t)
-// } //End TestTenThousandPingPong()
-
-*/

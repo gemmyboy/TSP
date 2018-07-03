@@ -166,7 +166,7 @@ func (ss *SyncServer) processConnections() {
 		con, err := ss.listener.Accept()
 		if err != nil || con == nil {
 			continue
-		} else if ss.capacity == ss.current {
+		} else if ss.capacity <= ss.current {
 			con.Close()
 		} else if err == nil {
 			//Create an ID for connection and fork
@@ -174,7 +174,6 @@ func (ss *SyncServer) processConnections() {
 			ss.connections.Set(id, con)
 
 			go ss.initialize(con, id)
-			time.Sleep(time.Millisecond * 1000)
 
 			//Increment ider & current
 			ss.muxIder.Lock()
@@ -256,6 +255,9 @@ func (ss *SyncServer) initialize(conn net.Conn, id string) {
 //route -: performs general routing logic for given connection
 func (ss *SyncServer) route(conn net.Conn, id string, cType int) {
 	defer conn.Close()
+	
+	//Flag Connection that everything is good to go. All Clients are required to receive this.
+	ss.send(&Box{command: cPing, destination: uint32(0), data: []byte("1")}, conn, cType)
 
 	for ss.isRunning {
 
@@ -296,7 +298,7 @@ func (ss *SyncServer) route(conn net.Conn, id string, cType int) {
 			ss.groupCreate(b)
 			break
 		case cDelete: //Delete Group
-			ss.groupDelete(b)
+			ss.groupDelete(b, id)
 			break
 		case cJoin: //Join Group
 			ss.groupJoin(b, id)
@@ -436,9 +438,9 @@ func (ss *SyncServer) groupCreate(b *Box) {
 } //End groupCreate()
 
 //groupDelete -: Delete a group on SS
-func (ss *SyncServer) groupDelete(b *Box) {
+func (ss *SyncServer) groupDelete(b *Box, id string) {
 	// b.Destination contains <group-id>
-	data := string(b.destination)
+	data := strconv.Itoa(int(b.destination))
 
 	//Nil check
 	if data == "" {
@@ -446,9 +448,13 @@ func (ss *SyncServer) groupDelete(b *Box) {
 		return
 	}
 
-	//Check group Exists
-	if ss.groups.Has(data) {
-		ss.groups.Remove(data)
+	//Check group Exists && Master is only one attempting delete
+	g, bb := ss.groups.Get(data)
+	if bb {
+		tg := g.(*Group)
+		if tg.masterid == id {
+			ss.groups.Remove(data)
+		}
 	}
 } //End groupDelete()
 
@@ -813,14 +819,12 @@ func (ss *SyncServer) wsreceive(conn net.Conn) *Box {
 			maskkey[2] = buffer[4]
 			maskkey[3] = buffer[5]
 			buffer = buffer[6:]
-			log.Println(len(buffer))
 		} else if payloadlen1 == 126 {
 			maskkey[0] = buffer[4]
 			maskkey[1] = buffer[5]
 			maskkey[2] = buffer[6]
 			maskkey[3] = buffer[7]
 			buffer = buffer[8:]
-			log.Println(len(buffer))
 		} else if payloadlen1 == 127 {
 			maskkey[0] = buffer[10]
 			maskkey[1] = buffer[11]

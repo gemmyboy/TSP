@@ -25,6 +25,7 @@ type Client struct {
 	gName       map[string]uint32 //Map Name to group ID
 	muxSend     *sync.Mutex       //Mutex to control Send
 	muxReceive  *sync.Mutex       //Mutex to control Receive
+	muxList		*sync.Mutex		  //Group Listing is being refreshed
 	receiveChan chan *Box         //Queue of Boxes client has received
 	sendChan    chan *Box         //Queue of Boxes client needs to send
 	closeFlag   bool              //Disconnect was called
@@ -45,6 +46,7 @@ func NewClient(connectString string) *Client {
 	c.closeFlag = false
 	c.closeGroup = &sync.WaitGroup{}
 	c.closeGroup.Add(2)
+	c.muxList = &sync.Mutex{}
 	return c
 } //End NewClient()
 
@@ -56,9 +58,10 @@ func (c *Client) Connect() {
 	}
 	c.conn = conn
 
+	_ = c.receive()	//Ping Receive so know that SS connection is ready.
+
 	go c.processReceive() //Goroutine for Receiving Data
 	go c.processSend()    //Goroutine for Sending Data
-
 	time.Sleep(time.Millisecond * 1000)
 } //End Connect()
 
@@ -127,6 +130,7 @@ func (c *Client) processReceive() {
 					t, _ := strconv.Atoi(strB[0])
 					c.gName[strB[1]] = uint32(t) //Map Name to ID
 				}
+				c.muxList.Unlock()
 			}
 		case cSend:
 			{
@@ -150,7 +154,7 @@ func (c *Client) processReceive() {
 				return /*Error State*/
 			}
 		} //End switch
-		time.Sleep(time.Millisecond * 1)
+		//time.Sleep(time.Millisecond * 1)
 	} //End for
 } //End processReceive()
 
@@ -219,24 +223,30 @@ func (c *Client) GroupCreate(name, password, mpassword string, capacity int) {
 
 //GroupDelete -: Delete a group on the SS
 func (c *Client) GroupDelete(name string) {
+	c.muxList.Lock()
 	if v, ok := c.gName[name]; ok {
 		delete(c.gName, name)
 		c.SendBox(&Box{command: cDelete, destination: uint32(v)})
 	}
+	c.muxList.Unlock()
 } //End GroupDelete()
 
 //GroupJoin -: Join an existing group on the SS
 func (c *Client) GroupJoin(name, password string) {
+	c.muxList.Lock()
 	if v, ok := c.gName[name]; ok {
 		c.SendBox(&Box{command: cJoin, destination: uint32(v), data: []byte(password)})
 	}
+	c.muxList.Unlock()
 } //End GroupJoin()
 
 //GroupMasterJoin -: Join an existing group on the SS
 func (c *Client) GroupMasterJoin(name, password, mpassword string) {
+	c.muxList.Lock()
 	if v, ok := c.gName[name]; ok {
 		c.SendBox(&Box{command: cJoin, destination: uint32(v), data: []byte(password + "," + mpassword)})
 	}
+	c.muxList.Unlock()
 } //End GroupJoin()
 
 //GroupLeave -: Leave an existing group on the SS
@@ -248,24 +258,17 @@ func (c *Client) GroupLeave(name string) {
 
 //GroupList -: Retrieve a list of existing groups on the SS
 func (c *Client) GroupList() {
+	c.muxList.Lock()
 	c.SendBox(&Box{command: cList, data: nil})
 } //End GroupList()
 
 //GroupCheck -: Check if group exists yet
 func (c *Client) GroupCheck(gpName string) bool {
-	_, ok := c.gName[gpName]; return ok
+	c.muxList.Lock()
+	_, ok := c.gName[gpName]
+	c.muxList.Unlock()
+	return ok
 } //End GroupCheck()
-
-//GroupWaitCheck -: Pauses client until GroupCheck returns true but only retries some # of times.
-func (c *Client) GroupWaitCheck(gpName string) bool {
-	for i := 0; i < 20; i++ {
-		if c.GroupCheck(gpName) {
-			return true
-		}
-		time.Sleep(time.Millisecond * 100)
-	}
-	return false
-} //End GroupWaitCheck() 
 
 //---------------Helper Functionality-----------------------------
 
@@ -278,7 +281,7 @@ func (c *Client) send(b *Box) {
 	_, err := c.conn.Write(ub)
 	c.muxSend.Unlock()
 	if err != nil {
-		//log.Println("Client-Box failed to send of size:", num, len(ub))
+		log.Println("Client-Box failed to send", err)
 		return
 	}
 
@@ -306,10 +309,10 @@ func (c *Client) receive() *Box {
 		return nil
 	} else if err != nil {
 		c.closeFlag = true
-		//log.Println("Client-Failed to receive:", err)
+		log.Println("Client-Failed to receive:", err)
 		return nil
 	} else if num != 4 {
-		//log.Println("Client-Didn't receive size:", num)
+		log.Println("Client-Didn't receive size:", num)
 		c.closeFlag = true
 		return nil
 	}
