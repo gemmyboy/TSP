@@ -5,6 +5,7 @@ import (
 	"crypto/sha1"
 	"encoding/base64"
 	"encoding/binary"
+
 	//"unicode/utf8"
 	"io"
 	"log"
@@ -14,7 +15,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/streamrail/concurrent-map"
+	cmap "github.com/streamrail/concurrent-map"
 )
 
 /*
@@ -255,7 +256,7 @@ func (ss *SyncServer) initialize(conn net.Conn, id string) {
 //route -: performs general routing logic for given connection
 func (ss *SyncServer) route(conn net.Conn, id string, cType int) {
 	defer conn.Close()
-	
+
 	//Flag Connection that everything is good to go. All Clients are required to receive this.
 	ss.send(&Box{command: cPing, destination: uint32(0), data: []byte("1")}, conn, cType)
 

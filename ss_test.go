@@ -1,11 +1,10 @@
 package tsp
 
 import (
+	"strconv"
 	"sync"
 	"testing"
 	"time"
-	"strconv"
-	//"log"
 )
 
 /*
@@ -17,10 +16,12 @@ import (
 	To test individually: go test -v -run <NameOfTest>
 */
 
-
 func WaitChannel(c chan struct{}, n int) {
 	for i := 0; i < n; i++ {
-		<- c
+		select {
+		case <-c:
+			continue
+		}
 	}
 }
 
@@ -29,7 +30,6 @@ func SendChannel(c chan struct{}, n int) {
 		c <- struct{}{}
 	}
 }
-
 
 //Test Creating SS
 func TestCreate(t *testing.T) {
@@ -168,7 +168,7 @@ func TestPing(t *testing.T) {
 
 	if string(b.data) != "1" && b.command != cPing {
 		t.Error("Bad Box returned from SS\n")
-	}	
+	}
 
 	c.Disconnect()
 	ss.Stop()
@@ -191,10 +191,9 @@ func TestGroupCreate(t *testing.T) {
 	if !c.GroupCheck("Test1") {
 		t.Error("Group Failed to be created and/or listed.")
 	}
-	
+
 	ss.Stop()
 } //End TestGroupCreate()
-
 
 //Test Deleting a Group from the SS
 func TestGroupDelete(t *testing.T) {
@@ -213,7 +212,7 @@ func TestGroupDelete(t *testing.T) {
 	if !c.GroupCheck("Test1") {
 		t.Error("Group Failed to be created and/or listed.")
 	}
-	
+
 	//Delete a Group
 	c.GroupMasterJoin("Test1", "Password", "MPassword")
 	c.GroupDelete("Test1")
@@ -227,14 +226,13 @@ func TestGroupDelete(t *testing.T) {
 	ss.Stop()
 } //End TestGroupDelete()
 
-
 //Test Sending Data from Client-to-Client using SS as medium.
 func TestGroupSend(t *testing.T) {
 	ss := NewSyncServer("localhost:4460")
 
 	ss.Start()
-	boolMaster := false
-	boolClient := false
+	chanMaster := make(chan struct{})
+	chanClient := make(chan struct{})
 
 	//Kick off Master
 	go func() {
@@ -252,7 +250,7 @@ func TestGroupSend(t *testing.T) {
 
 		b := c.ReceiveBox()
 		if string(b.data) == "Hello There!" {
-			boolMaster = true
+			SendChannel(chanMaster, 1)
 		} else {
 			t.Error("Received a Bad Box on Master", string(b.data))
 		}
@@ -281,7 +279,7 @@ func TestGroupSend(t *testing.T) {
 
 		b := c.ReceiveBox()
 		if string(b.data) == "Hello Back!" {
-			boolClient = true
+			SendChannel(chanClient, 1)
 		} else {
 			t.Error("Received a Bad Box on Client", string(b.data))
 		}
@@ -290,13 +288,11 @@ func TestGroupSend(t *testing.T) {
 	}() //End Client
 
 	//Wait until otherwise
-	for !boolMaster || !boolClient {
-		time.Sleep(time.Millisecond * 1000)
-	}
+	WaitChannel(chanMaster, 1)
+	WaitChannel(chanClient, 1)
 
 	ss.Stop()
 } //End TestGroupSend()
-
 
 //Test all membership functionality for Groups including Joining and Leaving
 func TestGroupAll(t *testing.T) {
@@ -364,7 +360,7 @@ func xMassConnectPing(t *testing.T, num int, address string) {
 	//Kick off N Client(s)
 	for i := 0; i < n; i++ {
 		go func(l int, chan1 chan struct{}, chan2 chan struct{}, chan3 chan struct{}, address string) {
-			<- chan2
+			<-chan2
 
 			//Connect to SS
 			c := NewClient(address)
@@ -420,7 +416,6 @@ func TestCounting(t *testing.T) {
 	ss := NewSyncServer("localhost:4468")
 	ss.Start()
 
-
 	//Kick off Master
 	go func() {
 		//Connect to SS
@@ -439,7 +434,7 @@ func TestCounting(t *testing.T) {
 		WaitChannel(chan1, n)
 
 		for i := 0; i < n; i++ {
-			c.Send("Test1", []byte(strconv.Itoa(i + 1)))
+			c.Send("Test1", []byte(strconv.Itoa(i+1)))
 		}
 
 		count := 0
@@ -457,9 +452,9 @@ func TestCounting(t *testing.T) {
 
 	//Kick off N Client(s)
 	for i := 0; i < n; i++ {
-		
+
 		go func(l int) {
-			<- chan2
+			<-chan2
 
 			//Connect to SS
 			c := NewClient("localhost:4468")
@@ -472,7 +467,6 @@ func TestCounting(t *testing.T) {
 			c.GroupJoin("Test1", "Password")
 			chan1 <- struct{}{}
 
-
 			for {
 				b := c.ReceiveBox()
 				value, _ := strconv.Atoi(string(b.Data()))
@@ -480,7 +474,7 @@ func TestCounting(t *testing.T) {
 					boolClient++
 					break
 				}
-				c.Send("Test1", []byte(strconv.Itoa(value + 1)))
+				c.Send("Test1", []byte(strconv.Itoa(value+1)))
 			}
 			c.Disconnect()
 			chan3 <- struct{}{}
@@ -502,4 +496,3 @@ func TestCounting(t *testing.T) {
 
 	ss.Stop()
 }
-
